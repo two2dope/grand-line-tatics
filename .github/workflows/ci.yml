@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Leak check and headless suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Leak check
+        run: node scripts/check-leaks.js
+
+      - name: Build single-file game
+        run: node scripts/build.js
+
+      - name: Rules, RNG and PT-BR strings
+        run: node tests/rules-test.js
+
+      - name: PvP protocol (fault injection and tampering)
+        run: node tests/pvp-protocol.js
+
+      - name: Artifact db transport
+        run: node tests/artifact-db-test.js
+
+      - name: QR code encoder
+        run: node tests/qr-test.js

@@ -1,0 +1,43 @@
+{
+  "name": "grand-line-tactics",
+  "version": "2.0.0",
+  "description": "Batalha naval tática em pixel art 3D, 100% em português: jogue contra a CPU ou online. Arquivo único, three.js r128, Web Audio procedural e PvP com commit-reveal SHA-256. Tributo de fã não oficial.",
+  "private": true,
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/two2dope/grand-line-tatics.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "prepare": "node -e \"try{require('child_process').execSync('git config core.hooksPath .githooks',{stdio:'ignore'})}catch(e){}\"",
+    "build": "node scripts/build.js",
+    "build:artifact": "node scripts/build-artifact.js",
+    "verify:artifact": "node scripts/verify-artifact.js",
+    "verify:index": "node scripts/verify-index.js",
+    "check:leaks": "node scripts/check-leaks.js",
+    "lan": "node scripts/lan-server.js --open",
+    "lan:headless": "node scripts/lan-server.js",
+    "capture": "node scripts/capture-scene.js",
+    "test": "npm run test:unit && npm run build && npm run test:e2e && npm run test:lan",
+    "test:unit": "node tests/rules-test.js && node tests/pvp-protocol.js && node tests/artifact-db-test.js && node tests/qr-test.js",
+    "test:rules": "node tests/rules-test.js",
+    "test:pvp": "node tests/pvp-protocol.js",
+    "test:artifact": "node tests/artifact-db-test.js",
+    "test:ui": "node tests/qr-test.js",
+    "test:sim": "node tests/sim-headless.js",
+    "test:e2e": "node tests/e2e-gameplay-verify.js",
+    "test:lan": "node tests/lan-e2e-verify.js",
+    "test:picking": "node tests/critic/picking.mjs",
+    "test:legacy": "node legacy/tests/run.mjs",
+    "build:demo": "node tools/build.js --legacy --out dist/full.html",
+    "trailer": "node tools/trailer/record.mjs && node tools/trailer/audio.mjs && node tools/trailer/record.mjs --encode",
+    "smoke": "node tools/smoke.mjs",
+    "baseline": "node tools/baseline.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

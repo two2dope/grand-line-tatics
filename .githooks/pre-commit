@@ -1,0 +1,4 @@
+#!/bin/sh
+# Blocks commits that would publish secrets, personal data, local-only folders or oversized files.
+# Enabled by `npm install` (the "prepare" script sets core.hooksPath to .githooks).
+exec node scripts/check-leaks.js --staged

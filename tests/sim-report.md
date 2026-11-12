@@ -1,8 +1,8 @@
 # Grand Line Tactics — Relatório da Suíte de Simulação Headless
 
-**Data / Hora:** 2026-11-12T19:31:37.452Z
+**Data / Hora:** 2026-11-12T23:57:04.076Z
 **Total de Partidas Simuladas:** 200.000
-**Tempo Total de Execução:** 780.06 s
+**Tempo Total de Execução:** 471.33 s
 
 ## 1. Calibração de Eficiência de Busca (10x10 Clássica)
 

@@ -190,8 +190,11 @@ async function run() {
       const original = GLT.ui.renderPvpTab;
       let n = 0;
       GLT.ui.renderPvpTab = function() { n++; return original.apply(this, arguments); };
-      setTimeout(() => { GLT.ui.renderPvpTab = original; resolve(n); }, 4000);
+      setTimeout(() => { GLT.ui.renderPvpTab = original; resolve(n); }, 7000);
     }));
+    // The first presence of each seat legitimately redraws the tab once (absent -> present).
+    // Let one heartbeat period (3 s) pass, then watch a window that spans two more.
+    await host.waitForTimeout(4000);
     const renders = await Promise.all([countRenders(host), countRenders(guest)]);
     check('Online tab is not rebuilt while both players idle in the room (presence is silent)',
       renders[0] === 0 && renders[1] === 0, renders.join('/'));

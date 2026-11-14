@@ -104,6 +104,13 @@ function createLanServer() {
     if (!key || !event || typeof event !== 'object') return false;
 
     if (key === 'glt_open_rooms') {
+      if (event.type === 'ROOM_DELETED' && event.id && event.reason === 'started') {
+        // The match began: the room leaves the open list but its log stays (refresh/resume need it).
+        const startedId = String(event.id).toUpperCase();
+        openRoomsMap.delete(startedId);
+        broadcastSse('glt_open_rooms', { type: 'ROOM_DELETED', id: startedId, reason: 'started', _transportMsgId: event._transportMsgId || ('started_' + Date.now()) });
+        return true;
+      }
       if (event.type === 'ROOM_DELETED' && event.id) {
         const cleanId = String(event.id).toUpperCase();
         openRoomsMap.delete(cleanId);
@@ -141,6 +148,12 @@ function createLanServer() {
         return true;
       }
       return false;
+    }
+
+    // Presence is live-only: storing it would push ROOM_CREATED / READY_COMMIT out of the capped log.
+    if (event.type === 'HEARTBEAT') {
+      broadcastSse(key, event);
+      return true;
     }
 
     if (!roomLogs.has(key)) {

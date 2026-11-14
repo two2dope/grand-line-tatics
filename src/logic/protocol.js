@@ -1599,6 +1599,9 @@
       this.state.roomId = this.roomId;
 
       this.hitsTaken = new Set();
+      // Live presence (HEARTBEAT) is kept apart from the match log: it never enters rawEvents,
+      // never triggers a fold and only notifies the UI when a seat goes from absent to present.
+      this._presence = [0, 0];
       this.seqCounter = 1;
       this.heartbeatTimer = null;
       this.livenessTimer = null;
@@ -1615,6 +1618,7 @@
       // Advance the counter only from seqs the fold accepts (inside the seq window)
       this.seqCounter = Math.max(this.seqCounter, seqWindow(this.rawEvents).maxSeq + 1);
       this.state = foldMatchLog(this.rawEvents, this.matchConfig);
+      this._applyPresence();
       this._applyAbsenceIntegrity();
 
       // Subscribe to transport updates
@@ -1695,13 +1699,37 @@
       }
       this.seqCounter = Math.max(this.seqCounter, claim.seq + 1);
       this.state = foldMatchLog(this.rawEvents, this.matchConfig);
+      this._applyPresence();
       if (typeof this.onStateChange === 'function') this.onStateChange(this.state);
       return true;
+    }
+
+    /** Re-apply live presence on top of a freshly folded state. */
+    _applyPresence() {
+      if (!this._presence || !this.state || !this.state.players) return;
+      for (let i = 0; i < 2; i++) {
+        const p = this.state.players[i];
+        if (p && this._presence[i] && this._presence[i] > (p.lastHeartbeat || 0)) {
+          p.lastHeartbeat = this._presence[i];
+          p.connected = true;
+        }
+      }
     }
 
     _handleIncomingEvent(event) {
       if (this.isDestroyed || !event) return;
       if (!isAuthorConsistent(event)) return;
+
+      if (event.type === 'HEARTBEAT') {
+        const pIdx = event.playerIndex;
+        if (pIdx !== 0 && pIdx !== 1) return;
+        const before = this.state.players[pIdx];
+        const wasPresent = !!(before && before.lastHeartbeat);
+        this._presence[pIdx] = Math.max(this._presence[pIdx] || 0, event.timestamp || Date.now());
+        this._applyPresence();
+        if (!wasPresent && typeof this.onStateChange === 'function') this.onStateChange(this.state);
+        return;
+      }
 
       // Deduplicate by (author, eventId): another author can never shadow an id
       const key = eventKey(event);
@@ -1714,6 +1742,7 @@
       // Fold updated log
       const oldPhase = this.state.phase;
       this.state = foldMatchLog(this.rawEvents, this.matchConfig);
+      this._applyPresence();
       if (this._refuteAbsence()) return;
       this._applyAbsenceIntegrity();
 

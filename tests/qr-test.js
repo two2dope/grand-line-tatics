@@ -216,24 +216,77 @@ it('GLT.ui.createQrCard builds complete accessible DOM card with header, wrapper
 
 console.log('\n--- 3. In-Room View & LAN Card Integration ---');
 
-it('renderPvpTab includes #qr-room-section when in an active room', () => {
+function roomClientStub(playerIndex, guestId) {
+  return {
+    role: 'player',
+    playerIndex: playerIndex,
+    state: {
+      phase: 'lobby',
+      players: [
+        { id: 'host_1', nickname: 'Anfitrião', ready: false, crewId: 'straw_hats' },
+        { id: guestId || null, nickname: guestId ? 'Convidado' : '', ready: false, crewId: 'marines' }
+      ]
+    },
+    selectCrew: function() {}
+  };
+}
+
+it('HOST of a room with an empty second seat gets the room QR Code and the host-only controls', () => {
   const container = document.createElement('div');
   ui.dom = { tabPvp: container };
   ui.pvpRoomId = 'ABCDE';
   ui.pvpRole = 'player';
+  ui.pvpInviteCode = '';
+  ui.pvpClient = roomClientStub(0, null);
   ui.renderPvpTab();
 
-  const qrRoomSection = container.querySelector('#qr-room-section');
-  assert(qrRoomSection, '#qr-room-section must be rendered in active room');
   const qrWrapper = container.querySelector('#qr-room-wrapper');
-  assert(qrWrapper, '#qr-room-wrapper must be present in active room');
-  assert(qrWrapper.innerHTML.includes('<svg'), 'QR wrapper must contain SVG');
+  assert(container.querySelector('#qr-room-section'), '#qr-room-section must be rendered for the host');
+  assert(qrWrapper && qrWrapper.innerHTML.includes('<svg'), 'host QR wrapper must contain SVG');
+  assert(container.querySelector('.btn-delete-active-room'), 'host can delete its own room');
+  assert(container.querySelector('#glt-pvp-opp-status').textContent.includes('Ninguém entrou'),
+    'an empty room says nobody joined, not a generic "waiting"');
 });
 
-it('renderPvpTab includes #qr-lan-section when in LAN server lobby (before room creation)', () => {
+it('HOST stops showing the QR Code once a rival took the second seat', () => {
+  const container = document.createElement('div');
+  ui.dom = { tabPvp: container };
+  ui.pvpRoomId = 'ABCDE';
+  ui.pvpClient = roomClientStub(0, 'guest_1');
+  ui.renderPvpTab();
+  assert(!container.querySelector('#qr-room-section'), 'no QR Code when the room is full');
+  assert(container.querySelector('#glt-pvp-opp-status').textContent.includes('Convidado'));
+});
+
+it('GUEST of a room never gets the QR Code, the invite link or the delete-room control', () => {
+  const container = document.createElement('div');
+  ui.dom = { tabPvp: container };
+  ui.pvpRoomId = 'ABCDE';
+  ui.pvpRole = 'player';
+  ui.pvpInviteCode = 'ABCDE';
+  ui.pvpStatus = 'connected';
+  ui.pvpLobbyTransport = {
+    getBackendType: () => 'lanRelay',
+    getLanUrls: () => ['http://192.168.1.100:3000']
+  };
+  ui.pvpClient = roomClientStub(1, 'guest_1');
+  ui.renderPvpTab();
+
+  assert(!container.querySelector('#qr-room-section'), 'guest must not render the room QR Code');
+  assert(!container.querySelector('.glt-qr-code-wrapper'), 'guest must not render any QR Code');
+  assert(!container.querySelector('.btn-delete-active-room'), 'guest must not delete the host room');
+  assert(!container.querySelector('.btn-copy'), 'guest must not get the invite link button');
+  assert(!container.querySelector('.glt-lan-share-card'), 'guest must not get the LAN share card');
+  assert(container.querySelector('#glt-pvp-guest-title').textContent.includes('Anfitrião'));
+  assert(container.querySelector('#btn-pvp-ready'), 'guest still commits its fleet');
+});
+
+it('LAN lobby before a room exists shows no QR Code (the only QR Code is the room invite)', () => {
   const container = document.createElement('div');
   ui.dom = { tabPvp: container };
   ui.pvpRoomId = '';
+  ui.pvpClient = null;
+  ui.pvpInviteCode = '';
   ui.pvpStatus = 'connected'; // a mocked, already-attached lobby transport
   ui.pvpLobbyTransport = {
     getBackendType: () => 'lanRelay',
@@ -241,10 +294,24 @@ it('renderPvpTab includes #qr-lan-section when in LAN server lobby (before room 
   };
   ui.renderPvpTab();
 
-  const qrLanSection = container.querySelector('#qr-lan-section');
-  assert(qrLanSection, '#qr-lan-section must be rendered in LAN server lobby');
-  const qrWrapper = container.querySelector('#qr-lan-wrapper');
-  assert(qrWrapper, '#qr-lan-wrapper must be present in LAN server lobby');
+  assert(!container.querySelector('.glt-qr-code-wrapper'), 'no QR Code before the room exists');
+  assert(container.querySelector('#glt-qr-after-create-hint'), 'lobby explains the QR Code comes after "Criar Sala"');
+  assert(container.querySelector('#btn-pvp-create'), 'host lobby keeps "Criar Sala"');
+});
+
+it('instance opened from an invite whose room is gone offers a retry, never "Criar Sala"', () => {
+  const container = document.createElement('div');
+  ui.dom = { tabPvp: container };
+  ui.pvpRoomId = '';
+  ui.pvpClient = null;
+  ui.pvpInviteCode = 'ABCDE';
+  ui.pvpStatus = 'connected';
+  ui.renderPvpTab();
+
+  assert(container.querySelector('#btn-pvp-invite-retry'), 'guest instance offers to retry the invite');
+  assert(!container.querySelector('#btn-pvp-create'), 'guest instance must not offer "Criar Sala"');
+  assert(!container.querySelector('.glt-qr-code-wrapper'), 'guest instance must not render a QR Code');
+  ui.pvpInviteCode = '';
 });
 
 console.log('\n--- 4. Crew Selection & Captain Card Synchronization ---');

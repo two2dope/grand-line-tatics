@@ -568,6 +568,10 @@
       this.lanCache = new Map(); // key -> Array<event> (lanRelay)
       this.subscribers = new Map(); // key -> Set<handler>
       this.storageListener = null;
+      this.onStatus = typeof options.onStatus === 'function' ? options.onStatus : null;
+      this.lanRetryBaseMs = options.lanRetryBaseMs !== undefined ? options.lanRetryBaseMs : 400;
+      this.lanMaxAttempts = options.lanMaxAttempts !== undefined ? options.lanMaxAttempts : 6;
+      this.destroyed = false;
 
       if (this.backend === 'lanRelay' && typeof window !== 'undefined' && window.__GLT_LAN_CONFIG__) {
         const initRooms = window.__GLT_LAN_CONFIG__.initialRooms;
@@ -680,6 +684,47 @@
       }
     }
 
+    _lanStatus(kind, detail) {
+      if (!this.onStatus) return;
+      try { this.onStatus(kind, detail); } catch (_) {}
+    }
+
+    /**
+     * Deliver one event to the LAN relay. The relay de-duplicates by eventId/_transportMsgId,
+     * so a retry is idempotent. Presence is never retried (the next heartbeat replaces it).
+     */
+    _postLan(key, event, attempt) {
+      if (typeof fetch !== 'function' || this.destroyed) return;
+      const isPresence = !!event && event.type === 'HEARTBEAT';
+      const giveUp = () => {
+        if (!isPresence) this._lanStatus('error', { code: 'unavailable', key, type: event.type });
+      };
+      const retry = () => {
+        if (isPresence) return;
+        if (this.destroyed || attempt >= this.lanMaxAttempts) { giveUp(); return; }
+        this._lanStatus('retrying', { key, attempt });
+        const wait = Math.min(8000, this.lanRetryBaseMs * Math.pow(2, attempt - 1));
+        setTimeout(() => this._postLan(key, event, attempt + 1), wait);
+      };
+      let req;
+      try {
+        req = fetch('/api/glt-lan/publish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, event })
+        });
+      } catch (_) { retry(); return; }
+      Promise.resolve(req).then(res => {
+        if (res && res.ok) {
+          if (attempt > 1) this._lanStatus('ok', { key });
+        } else if (res && res.status >= 400 && res.status < 500) {
+          giveUp(); // the relay refused this payload: the same body cannot succeed later
+        } else {
+          retry();
+        }
+      }, retry);
+    }
+
     _getChannel(key) {
       if (this.channels.has(key)) return this.channels.get(key);
       if (typeof BroadcastChannel !== 'undefined') {
@@ -745,13 +790,7 @@
       if (this.backend === 'lanRelay') {
         this._updateLanCacheWithEvent(key, cloned);
         this._dispatch(key, cloned);
-        if (typeof fetch === 'function') {
-          fetch('/api/glt-lan/publish', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ key, event: cloned })
-          }).catch(() => {});
-        }
+        this._postLan(key, cloned, 1);
         return true;
       }
 
@@ -926,6 +965,7 @@
     }
 
     destroy() {
+      this.destroyed = true;
       this.channels.forEach(ch => {
         try { ch.close(); } catch (_) {}
       });

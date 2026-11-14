@@ -3230,7 +3230,8 @@
         onStatus: function(kind, detail) {
           var T = getT();
           if (kind === 'error') {
-            self.announce(T.lobby.onlineWriteFailed);
+            var isLan = self.pvpBackend && self.pvpBackend.kind !== 'artifactDb';
+            self.announce(isLan ? T.lobby.lanWriteFailed : T.lobby.onlineWriteFailed);
           } else if (kind === 'seat_taken' && detail && detail.key === self.pvpRoomId) {
             self.announce(T.lobby.seatTakenToast(detail.key));
             self.leavePvpRoom();
@@ -3413,8 +3414,10 @@
           return self.resumePvpSession();
         }
         if (roomCode && roomCode.length === 5) {
+          // Opened from an invite (QR Code / link): this instance is a guest, never a host.
+          self.pvpInviteCode = roomCode.toUpperCase();
           self.switchTab('tab-pvp');
-          return self.joinPvpRoom(roomCode.toUpperCase(), 'player');
+          return self.joinPvpRoom(self.pvpInviteCode, 'player');
         }
         return null;
       }).catch(function(err) {
@@ -3604,18 +3607,41 @@
       }
 
       var joinRole = role || 'player';
+      var backendKind = transport.getBackendType ? transport.getBackendType() : '';
       this.pvpRoomId = cleanCode;
       this.pvpRole = joinRole;
       this.pvpSyncedShots = {};
       this.pvpLastReactionCount = 0;
 
+      function abortJoin(message) {
+        if (transport && typeof transport.destroy === 'function') transport.destroy();
+        self.pvpRoomId = '';
+        self.pvpRole = 'player';
+        self.announce(message);
+        self.renderPvpTab();
+        return null;
+      }
+
       function finishJoinWithEvents(existingEvents) {
         var roomCfg = null;
+        var roomExists = false;
+        var otherGuest = false;
         for (var i = 0; i < existingEvents.length; i++) {
-          if (existingEvents[i] && existingEvents[i].type === 'ROOM_CREATED' && existingEvents[i].matchConfig) {
-            roomCfg = existingEvents[i].matchConfig;
-            break;
+          var ev = existingEvents[i];
+          if (!ev) continue;
+          if (ev.type === 'ROOM_CREATED') {
+            roomExists = true;
+            if (!roomCfg && ev.matchConfig) roomCfg = ev.matchConfig;
+          } else if (ev.type === 'ROOM_JOINED' && ev.role !== 'spectator' && ev.guestId && ev.guestId !== self.pvpPlayerId) {
+            otherGuest = true;
           }
+        }
+
+        // The published-Artifact transport binds seats itself (SEAT_BIND / seat_taken); the LAN
+        // relay and the cross-tab channel have no such gate, so the lobby checks before joining.
+        if (backendKind !== 'artifactDb') {
+          if (!roomExists) return abortJoin(T.lobby.roomNotFound(cleanCode));
+          if (joinRole === 'player' && otherGuest) return abortJoin(T.lobby.roomFull(cleanCode));
         }
 
         if (roomCfg) {
@@ -3663,7 +3689,6 @@
         return cleanCode;
       }
 
-      var backendKind = transport.getBackendType ? transport.getBackendType() : '';
       if ((backendKind === 'lanRelay' || backendKind === 'artifactDb') && typeof transport.readAsync === 'function') {
         return transport.readAsync(cleanCode).then(function(evts) {
           return finishJoinWithEvents(evts || []);
@@ -3740,6 +3765,7 @@
         this.pvpClient = null;
       }
       this.pvpRoomId = '';
+      this.pvpOppJoinedRoom = '';
       this.isPvpMode = false;
       this.pvpSyncedShots = {};
       if (this.gamePhase === 'BATTLE') {
@@ -3850,8 +3876,23 @@
         if (this.audio && typeof this.audio.playUiClick === 'function') this.audio.playUiClick();
       }
 
+      // Tell the host the moment a rival takes the second seat (the QR Code worked).
+      var oppJoinedNow = !!(state.players[oppIdx] && state.players[oppIdx].id);
+      if (this.pvpClient.role === 'player' && myIdx === 0 && oppJoinedNow && this.pvpOppJoinedRoom !== this.pvpRoomId) {
+        this.pvpOppJoinedRoom = this.pvpRoomId;
+        if (state.phase === 'lobby') {
+          this.announce(T.lobby.rivalJoinedToast(state.players[oppIdx].nickname || T.ui.defaultCaptainName));
+          if (this.audio && typeof this.audio.playDenDenMushi === 'function') this.audio.playDenDenMushi();
+        }
+      }
+
       // Transition from Lobby -> Active PvP Battle when both players committed SHA-256
       if (state.phase === 'playing' && this.gamePhase !== 'BATTLE') {
+        // LAN: a started room leaves "Salas Abertas" (its log stays on the relay for refresh/resume).
+        if (myIdx === 0 && this.pvpClient.role === 'player' && this.pvpLobbyTransport &&
+            this.pvpLobbyTransport.getBackendType && this.pvpLobbyTransport.getBackendType() === 'lanRelay') {
+          this.pvpLobbyTransport.publish('glt_open_rooms', { type: 'ROOM_DELETED', id: this.pvpRoomId, reason: 'started' });
+        }
         this.clearTurnTimers();
         this.hideModal();
         this.isPvpMode = true;
@@ -4799,8 +4840,15 @@
       statusBadge.appendChild(txtEl);
       pvpBox.appendChild(statusBadge);
 
+      // Host = seat 0 of the current room. Anyone else in a room (guest, spectator) and any
+      // instance opened from an invite link is a guest: it never gets host-only controls.
+      var isRoomHost = !!this.pvpRoomId && !!this.pvpClient && this.pvpClient.role === 'player' && this.pvpClient.playerIndex === 0;
+      var isGuestInstance = (!!this.pvpRoomId && !isRoomHost) || (!this.pvpRoomId && !!this.pvpInviteCode);
+
       // 1B. Wi-Fi / LAN Share Card (or helpful LAN launcher hint when in single-device tab mode)
-      if (backendType === 'lanRelay') {
+      if (backendType === 'lanRelay' && isGuestInstance) {
+        // Guests are already on the server: no address, no QR Code.
+      } else if (backendType === 'lanRelay') {
         var lanUrls = (this.pvpLobbyTransport && this.pvpLobbyTransport.getLanUrls)
           ? this.pvpLobbyTransport.getLanUrls()
           : [];
@@ -4834,13 +4882,13 @@
         lanCard.appendChild(lanRow);
 
         if (!this.pvpRoomId) {
-          var lanQrCard = this.createQrCard(
-            primaryLanUrl,
-            (T.lobby && T.lobby.qrCodeTitle) || 'QR Code de Acesso Rápido',
-            (T.lobby && T.lobby.qrCodeLanHint) || 'Aponte a câmera do celular para conectar ao servidor Wi-Fi!',
-            'qr-lan'
-          );
-          lanCard.appendChild(lanQrCard);
+          // No QR Code before a room exists: a code without a room opens a full copy of the
+          // game on the second device. The only QR Code is the room invite, shown after "Criar Sala".
+          var lanQrHint = document.createElement('p');
+          lanQrHint.className = 'glt-qr-hint';
+          lanQrHint.id = 'glt-qr-after-create-hint';
+          lanQrHint.textContent = '📱 ' + T.lobby.qrCodeAfterCreateHint;
+          lanCard.appendChild(lanQrHint);
         }
 
         pvpBox.appendChild(lanCard);
@@ -4892,6 +4940,42 @@
         offNote.id = 'glt-pvp-unavailable';
         offNote.textContent = this.pvpStatus === 'connecting' ? T.lobby.connectingHint : T.lobby.pvpUnavailablePvcHint;
         pvpBox.appendChild(offNote);
+      } else if (!this.pvpRoomId && this.pvpInviteCode) {
+        // Guest instance whose invite did not resolve (room closed, full, server restarted):
+        // offer a retry, never the host controls.
+        var inviteCard = document.createElement('div');
+        inviteCard.className = 'glt-room-info-card';
+        inviteCard.id = 'glt-pvp-invite-card';
+        var inviteTitle = document.createElement('strong');
+        inviteTitle.textContent = '📨 ' + T.lobby.inviteTitle(this.pvpInviteCode);
+        var inviteHint = document.createElement('p');
+        inviteHint.className = 'glt-qr-hint';
+        inviteHint.textContent = T.lobby.inviteFailedHint;
+        var inviteRow = document.createElement('div');
+        inviteRow.className = 'glt-btn-row glt-room-btn-row';
+        var inviteRetryBtn = document.createElement('button');
+        inviteRetryBtn.type = 'button';
+        inviteRetryBtn.id = 'btn-pvp-invite-retry';
+        inviteRetryBtn.className = 'glt-btn btn-primary';
+        inviteRetryBtn.textContent = T.lobby.inviteRetryButton;
+        inviteRetryBtn.addEventListener('click', function() {
+          self.joinPvpRoom(self.pvpInviteCode, 'player');
+        });
+        var inviteDismissBtn = document.createElement('button');
+        inviteDismissBtn.type = 'button';
+        inviteDismissBtn.id = 'btn-pvp-invite-dismiss';
+        inviteDismissBtn.className = 'glt-btn btn-sm';
+        inviteDismissBtn.textContent = T.lobby.inviteDismissButton;
+        inviteDismissBtn.addEventListener('click', function() {
+          self.pvpInviteCode = '';
+          self.renderPvpTab();
+        });
+        inviteRow.appendChild(inviteRetryBtn);
+        inviteRow.appendChild(inviteDismissBtn);
+        inviteCard.appendChild(inviteTitle);
+        inviteCard.appendChild(inviteHint);
+        inviteCard.appendChild(inviteRow);
+        pvpBox.appendChild(inviteCard);
       } else if (!this.pvpRoomId) {
         // Pre-Room Match Rules Summary Card
         var rulesSummaryCard = document.createElement('div');
@@ -5149,23 +5233,43 @@
           self.deleteOpenPvpRoom(self.pvpRoomId);
         });
 
-        roomBtnRow.appendChild(copyBtn);
+        var oppJoined = !!(pSt && pSt.players[oppIdx] && pSt.players[oppIdx].id);
+        var inLobbyPhase = !pSt || pSt.phase === 'lobby';
+
+        // Host-only controls: invite link, room deletion and the room QR Code.
+        if (isRoomHost) roomBtnRow.appendChild(copyBtn);
         roomBtnRow.appendChild(leaveBtn);
-        roomBtnRow.appendChild(deleteActiveBtn);
+        if (isRoomHost) roomBtnRow.appendChild(deleteActiveBtn);
+
+        if (!isRoomHost && this.pvpRole === 'player') {
+          var hostName = (pSt && pSt.players[0] && pSt.players[0].nickname) || T.ui.defaultCaptainName;
+          var guestTitle = document.createElement('strong');
+          guestTitle.id = 'glt-pvp-guest-title';
+          guestTitle.textContent = T.lobby.guestInRoomTitle(hostName);
+          var guestHint = document.createElement('small');
+          guestHint.style.color = 'var(--text-muted)';
+          guestHint.textContent = T.lobby.guestInRoomHint;
+          roomMetaDiv.appendChild(document.createElement('br'));
+          roomMetaDiv.appendChild(guestTitle);
+          roomMetaDiv.appendChild(document.createElement('br'));
+          roomMetaDiv.appendChild(guestHint);
+        }
 
         roomInfo.appendChild(roomMetaDiv);
         roomInfo.appendChild(roomBtnRow);
         pvpBox.appendChild(roomInfo);
 
-        // Room QR Code Section (Scan with phone to join directly)
-        var roomShareUrl = self.getPreferredShareBaseUrl().replace(/\/$/, '') + '/?room=' + self.pvpRoomId;
-        var roomQrCard = self.createQrCard(
-          roomShareUrl,
-          ((T.lobby && T.lobby.qrCodeRoomTitle) || 'QR Code da Sala') + ' (' + self.pvpRoomId + ')',
-          (T.lobby && T.lobby.qrCodeRoomHint) || 'Aponte a câmera do 2º jogador para entrar direto nesta sala!',
-          'qr-room'
-        );
-        pvpBox.appendChild(roomQrCard);
+        // Room QR Code: only the host shows it, and only while the second seat is empty.
+        if (isRoomHost && inLobbyPhase && !oppJoined) {
+          var roomShareUrl = self.getPreferredShareBaseUrl().replace(/\/$/, '') + '/?room=' + self.pvpRoomId;
+          var roomQrCard = self.createQrCard(
+            roomShareUrl,
+            ((T.lobby && T.lobby.qrCodeRoomTitle) || 'QR Code da Sala') + ' (' + self.pvpRoomId + ')',
+            (T.lobby && T.lobby.qrCodeRoomHint) || 'Aponte a câmera do 2º jogador para entrar direto nesta sala!',
+            'qr-room'
+          );
+          pvpBox.appendChild(roomQrCard);
+        }
 
         // In-Room Match Rules Display (Canonical settings set by the Host)
         var activeCfg = (pSt && pSt.matchConfig) ? pSt.matchConfig : this.matchConfig;
@@ -5276,13 +5380,31 @@
           readyBtn.disabled = myReady;
           readyBtn.textContent = myReady ? ('✓ ' + T.lobby.fleetCommittedBadge) : ('🔒 ' + T.lobby.readyFleetButton);
           readyBtn.addEventListener('click', function() {
-            self.readyPvpMatch();
+            if (readyBtn.disabled) return;
+            readyBtn.disabled = true; // one commitment per tap, even on a double tap
+            self.readyPvpMatch().catch(function(err) {
+              console.warn('[GLT] PvP ready failed:', err);
+              self.announce(T.lobby.lanWriteFailed);
+              self.renderPvpTab();
+            });
           });
           pvpBox.appendChild(readyBtn);
 
+          // Say exactly what the match is waiting for: an empty room never looks like "waiting".
           var oppStatus = document.createElement('div');
           oppStatus.className = 'glt-badge glt-pvp-opp-badge';
-          oppStatus.textContent = oppReady ? T.lobby.opponentCommittedBadge : T.lobby.waitingGuest;
+          oppStatus.id = 'glt-pvp-opp-status';
+          oppStatus.setAttribute('role', 'status');
+          var oppNick = (pSt && pSt.players[oppIdx] && pSt.players[oppIdx].nickname) || T.ui.defaultCaptainName;
+          if (oppReady) {
+            oppStatus.textContent = T.lobby.opponentCommittedBadge;
+          } else if (oppJoined) {
+            oppStatus.textContent = T.lobby.rivalInRoomBadge(oppNick);
+          } else if (isRoomHost) {
+            oppStatus.textContent = myReady ? T.lobby.hostCommittedNobody : T.lobby.hostWaitingNobody;
+          } else {
+            oppStatus.textContent = T.lobby.waitingHost;
+          }
           pvpBox.appendChild(oppStatus);
         }
 

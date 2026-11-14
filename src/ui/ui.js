@@ -3274,8 +3274,9 @@
           if (!ev) return;
           if (ev.type === 'ROOM_DELETED' && ev.id) {
             self.pvpOpenRooms = self.pvpOpenRooms.filter(function(r) { return r.id !== ev.id; });
-            // 'started' = both seats taken (the room just left "Partida rápida"), not a close.
-            if (self.pvpRoomId === ev.id && ev.reason !== 'started') {
+            // 'started' = both seats taken (the room just left "Partida rápida"); 'expired' = the
+            // host went quiet and the room only left the list. Neither one closes the room.
+            if (self.pvpRoomId === ev.id && !ev.reason) {
               self.leavePvpRoom();
               self.announce(getT().lobby.roomDeletedToast(ev.id));
             } else {
@@ -3775,10 +3776,55 @@
       }
     },
 
+    /** Only the device that opened a room may close it (a close ends the match for both). */
+    ownsPvpRoom: function(roomId) {
+      var cleanId = String(roomId || '').trim().toUpperCase();
+      if (!cleanId) return false;
+      var lobbyT = this.pvpLobbyTransport;
+      if (lobbyT && typeof lobbyT.ownsRoom === 'function') return !!lobbyT.ownsRoom(cleanId);
+      return true;
+    },
+
+    /**
+     * Destructive buttons ask twice: the first tap swaps the label for the question, the second
+     * (within 4 s) runs the action. No blocking dialog, so it works the same on touch and keyboard.
+     */
+    armTwoStepButton: function(btn, confirmLabel, action) {
+      var self = this;
+      var idleLabel = btn.textContent;
+      var idleAria = btn.getAttribute('aria-label');
+      var timer = null;
+      function disarm() {
+        if (timer) { clearTimeout(timer); timer = null; }
+        btn.removeAttribute('data-armed');
+        if (idleAria) btn.setAttribute('aria-label', idleAria);
+        else btn.textContent = idleLabel;
+      }
+      btn.addEventListener('click', function() {
+        if (btn.getAttribute('data-armed') === '1') {
+          disarm();
+          action();
+          return;
+        }
+        btn.setAttribute('data-armed', '1');
+        if (idleAria) btn.setAttribute('aria-label', confirmLabel);
+        else btn.textContent = confirmLabel;
+        self.announce(confirmLabel);
+        timer = setTimeout(disarm, 4000);
+      });
+      btn.addEventListener('blur', function() {
+        if (btn.getAttribute('data-armed') === '1') disarm();
+      });
+    },
+
     deleteOpenPvpRoom: function(roomId) {
       var T = getT();
       var cleanId = String(roomId || '').trim().toUpperCase();
       if (!cleanId) return;
+      if (!this.ownsPvpRoom(cleanId)) {
+        this.announce(T.lobby.onlyHostDeletesRoom);
+        return;
+      }
       this.pvpOpenRooms = this.pvpOpenRooms.filter(function(r) { return r.id !== cleanId; });
       if (this.pvpLobbyTransport && typeof this.pvpLobbyTransport.deleteRoom === 'function') {
         this.pvpLobbyTransport.deleteRoom(cleanId);
@@ -5079,13 +5125,15 @@
         openRoomsHeader.textContent = T.ui.openRoomsTitle;
         openHeaderRow.appendChild(openRoomsHeader);
 
-        if (this.pvpOpenRooms.length > 0) {
+        // On the Wi-Fi relay the list is shared by every device: nobody clears it for the others
+        // (abandoned rooms leave by themselves). Elsewhere the list lives in this browser only.
+        if (this.pvpOpenRooms.length > 0 && backendType !== 'lanRelay') {
           var clearRoomsBtn = document.createElement('button');
           clearRoomsBtn.type = 'button';
           clearRoomsBtn.id = 'btn-clear-open-rooms';
           clearRoomsBtn.className = 'glt-btn btn-sm btn-danger-ghost';
           clearRoomsBtn.textContent = T.lobby.clearRoomsButton;
-          clearRoomsBtn.addEventListener('click', function() {
+          this.armTwoStepButton(clearRoomsBtn, T.lobby.clearRoomsConfirm, function() {
             self.clearOpenPvpRooms();
           });
           openHeaderRow.appendChild(clearRoomsBtn);
@@ -5138,12 +5186,12 @@
             delIcon.setAttribute('aria-hidden', 'true');
             delIcon.textContent = '✕';
             delRoomBtn.appendChild(delIcon);
-            delRoomBtn.addEventListener('click', function() {
+            self.armTwoStepButton(delRoomBtn, T.lobby.deleteRoomConfirm(room.id), function() {
               self.deleteOpenPvpRoom(room.id);
             });
 
             actions.appendChild(joinQuickBtn);
-            actions.appendChild(delRoomBtn);
+            if (self.ownsPvpRoom(room.id)) actions.appendChild(delRoomBtn);
 
             card.appendChild(info);
             card.appendChild(actions);
@@ -5229,7 +5277,7 @@
         deleteActiveBtn.type = 'button';
         deleteActiveBtn.className = 'glt-btn btn-sm btn-danger-ghost btn-delete-active-room';
         deleteActiveBtn.textContent = T.lobby.deleteRoomButton;
-        deleteActiveBtn.addEventListener('click', function() {
+        this.armTwoStepButton(deleteActiveBtn, T.lobby.deleteRoomConfirm(this.pvpRoomId), function() {
           self.deleteOpenPvpRoom(self.pvpRoomId);
         });
 

@@ -572,6 +572,8 @@
       this.lanRetryBaseMs = options.lanRetryBaseMs !== undefined ? options.lanRetryBaseMs : 400;
       this.lanMaxAttempts = options.lanMaxAttempts !== undefined ? options.lanMaxAttempts : 6;
       this.destroyed = false;
+      // roomId -> secret that proves this device opened the room (LAN relay only closes a room for it)
+      this.roomTokens = this._loadRoomTokens();
 
       if (this.backend === 'lanRelay' && typeof window !== 'undefined' && window.__GLT_LAN_CONFIG__) {
         const initRooms = window.__GLT_LAN_CONFIG__.initialRooms;
@@ -632,13 +634,56 @@
       return 45;
     }
 
+    _loadRoomTokens() {
+      const tokens = new Map();
+      try {
+        if (typeof sessionStorage === 'undefined') return tokens;
+        const raw = JSON.parse(sessionStorage.getItem(this.prefix + 'room_tokens') || '{}');
+        Object.keys(raw || {}).forEach(id => {
+          if (typeof raw[id] === 'string' && raw[id]) tokens.set(id, raw[id]);
+        });
+      } catch (_) {}
+      return tokens;
+    }
+
+    _saveRoomTokens() {
+      try {
+        if (typeof sessionStorage === 'undefined') return;
+        const out = {};
+        Array.from(this.roomTokens.entries()).slice(-20).forEach(pair => { out[pair[0]] = pair[1]; });
+        sessionStorage.setItem(this.prefix + 'room_tokens', JSON.stringify(out));
+      } catch (_) {}
+    }
+
+    /** True when this device opened the room, so it is the one allowed to close it. */
+    ownsRoom(roomId) {
+      const cleanId = String(roomId || '').trim().toUpperCase();
+      if (!cleanId) return false;
+      if (this.backend !== 'lanRelay') return true; // same-device tabs share one local store
+      return this.roomTokens.has(cleanId);
+    }
+
+    /** Copy of a lobby event carrying this device's ownership proof for that room. */
+    _withOwnerToken(event) {
+      const cleanId = String((event && event.id) || '').trim().toUpperCase();
+      if (!cleanId) return event;
+      const isAnnounce = !event.type;
+      if (isAnnounce && !this.roomTokens.has(cleanId)) {
+        this.roomTokens.set(cleanId, getRandomHex(16));
+        this._saveRoomTokens();
+      }
+      const token = this.roomTokens.get(cleanId);
+      return token ? Object.assign({}, event, { ownerToken: token }) : event;
+    }
+
     _updateLanCacheWithEvent(key, event) {
       if (!key || !event) return;
       if (key === 'glt_open_rooms') {
         const cur = this.lanCache.get('glt_open_rooms') || [];
         if (event.type === 'ROOM_DELETED' && event.id) {
           this.lanCache.set('glt_open_rooms', cur.filter(r => r.id !== event.id));
-          this.lanCache.delete(event.id);
+          // 'started' / 'expired' only take the room off the list; its match log stays.
+          if (!event.reason) this.lanCache.delete(event.id);
           return;
         }
         if (event.type === 'ROOMS_CLEARED') {
@@ -788,9 +833,12 @@
 
       // 0. Wi-Fi / LAN Relay mode
       if (this.backend === 'lanRelay') {
+        if (key === 'glt_open_rooms' && cloned.type === 'ROOM_DELETED' && !this.ownsRoom(cloned.id)) {
+          return false; // the relay would refuse it: only the device that opened a room closes it
+        }
         this._updateLanCacheWithEvent(key, cloned);
         this._dispatch(key, cloned);
-        this._postLan(key, cloned, 1);
+        this._postLan(key, key === 'glt_open_rooms' ? this._withOwnerToken(cloned) : cloned, 1);
         return true;
       }
 
@@ -890,10 +938,14 @@
       };
 
       if (this.backend === 'lanRelay') {
+        const token = this.roomTokens.get(cleanId);
+        if (!token) return false; // not this device's room
         this._updateLanCacheWithEvent('glt_open_rooms', delEvent);
         this._dispatch('glt_open_rooms', delEvent);
+        this.roomTokens.delete(cleanId);
+        this._saveRoomTokens();
         if (typeof fetch === 'function') {
-          fetch('/api/glt-lan/rooms?id=' + encodeURIComponent(cleanId), { method: 'DELETE' }).catch(() => {});
+          fetch('/api/glt-lan/rooms?id=' + encodeURIComponent(cleanId) + '&token=' + encodeURIComponent(token), { method: 'DELETE' }).catch(() => {});
         }
         return true;
       }
@@ -923,11 +975,9 @@
       };
 
       if (this.backend === 'lanRelay') {
-        this._updateLanCacheWithEvent('glt_open_rooms', clrEvent);
-        this._dispatch('glt_open_rooms', clrEvent);
-        if (typeof fetch === 'function') {
-          fetch('/api/glt-lan/rooms?all=1', { method: 'DELETE' }).catch(() => {});
-        }
+        // Shared relay: close only the rooms this device opened. Rooms abandoned by other
+        // devices leave the list by themselves once their host stops sending presence.
+        Array.from(this.roomTokens.keys()).forEach(id => this.deleteRoom(id));
         return true;
       }
 
@@ -1904,6 +1954,15 @@
       f.byId.set(id, body);
       this._dispatch(f, lobbyView(body));
       return true;
+    }
+
+    /** True when this viewer opened the room (the store only lets its host close it). */
+    ownsRoom(roomId) {
+      const id = String(roomId || '').trim().toUpperCase();
+      if (!ROOM_KEY_RE.test(id)) return false;
+      if (this.myRooms.has(id)) return true;
+      const body = this._feed(LOBBY_KEY).byId.get(id);
+      return !!(body && this.userId && body.by === this.userId);
     }
 
     deleteRoom(roomId) {

@@ -47,6 +47,9 @@ function setupMockDom() {
           getAttribute: function(k) {
             return this.attributes[k];
           },
+          removeAttribute: function(k) {
+            delete this.attributes[k];
+          },
           addEventListener: function(evt, handler) {
             this._listeners = this._listeners || {};
             this._listeners[evt] = this._listeners[evt] || [];
@@ -312,6 +315,55 @@ it('instance opened from an invite whose room is gone offers a retry, never "Cri
   assert(!container.querySelector('#btn-pvp-create'), 'guest instance must not offer "Criar Sala"');
   assert(!container.querySelector('.glt-qr-code-wrapper'), 'guest instance must not render a QR Code');
   ui.pvpInviteCode = '';
+});
+
+function lanLobbyWithRoom(ownsRoom, calls) {
+  const container = document.createElement('div');
+  ui.dom = { tabPvp: container };
+  ui.pvpRoomId = '';
+  ui.pvpClient = null;
+  ui.pvpInviteCode = '';
+  ui.pvpStatus = 'connected';
+  ui.pvpOpenRooms = [{ id: 'ABCDE', host: 'Anfitrião', crewId: 'straw_hats', format: '10x10', mode: 'tatico' }];
+  ui.pvpLobbyTransport = {
+    getBackendType: () => 'lanRelay',
+    getLanUrls: () => ['http://192.168.1.100:3000'],
+    ownsRoom: () => ownsRoom,
+    deleteRoom: id => { calls.push(id); return true; }
+  };
+  ui.renderPvpTab();
+  return container;
+}
+
+it('Wi-Fi lobby: a device that did not open a room gets no delete button and no "Limpar Salas"', () => {
+  const calls = [];
+  const container = lanLobbyWithRoom(false, calls);
+  assert(container.querySelector('.open-room-card'), 'the room is still listed for joining');
+  assert(!container.querySelector('.btn-delete-room'), 'no delete button on a room opened by another device');
+  assert(!container.querySelector('#btn-clear-open-rooms'), 'nobody clears the shared Wi-Fi room list');
+
+  ui.deleteOpenPvpRoom('ABCDE');
+  assert.strictEqual(calls.length, 0, 'deleteOpenPvpRoom refuses a room this device does not own');
+  assert.strictEqual(ui.pvpOpenRooms.length, 1, 'the room stays listed');
+  ui.pvpOpenRooms = [];
+});
+
+it('Wi-Fi lobby: the device that opened the room deletes it only after confirming', () => {
+  const calls = [];
+  const container = lanLobbyWithRoom(true, calls);
+  const delBtn = container.querySelector('.btn-delete-room');
+  assert(delBtn, 'the owner gets the delete button');
+  const click = () => delBtn._listeners.click.forEach(handler => handler());
+
+  click();
+  assert.strictEqual(calls.length, 0, 'first tap only asks');
+  assert.strictEqual(delBtn.getAttribute('data-armed'), '1');
+  assert(delBtn.getAttribute('aria-label').includes('Toque de novo'), 'the question is exposed to screen readers');
+
+  click();
+  assert.deepStrictEqual(calls, ['ABCDE'], 'second tap deletes the room');
+  ui.pvpOpenRooms = [];
+  ui.pvpLobbyTransport = null;
 });
 
 console.log('\n--- 4. Crew Selection & Captain Card Synchronization ---');

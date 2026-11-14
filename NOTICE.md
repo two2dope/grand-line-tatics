@@ -14,8 +14,8 @@ Se você representa um detentor de direitos e quer que algo seja removido, abra 
 
 | Componente | Uso | Licença |
 |---|---|---|
-| [three.js](https://threejs.org) r128 | Renderização 3D. Carregado do cdnjs no jogo; cópia em `tools/vendor/three.min.js` para os testes offline | MIT, © 2010-2021 Three.js Authors |
-| [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P), [Pirata One](https://fonts.google.com/specimen/Pirata+One), [Chakra Petch](https://fonts.google.com/specimen/Chakra+Petch) | Tipografia, via Google Fonts | SIL Open Font License 1.1 |
+| [three.js](https://threejs.org) r128 | Renderização 3D. Carregado do cdnjs no jogo; cópia em `tools/vendor/three.min.js` para os testes offline e servida pelo servidor Wi-Fi | MIT, © 2010-2021 Three.js Authors |
+| [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P), [Pirata One](https://fonts.google.com/specimen/Pirata+One), [Chakra Petch](https://fonts.google.com/specimen/Chakra+Petch) | Tipografia, via Google Fonts; cópias em `assets/fonts/` (baixadas por `scripts/fetch-fonts.js`) servidas pelo servidor Wi-Fi | SIL Open Font License 1.1 |
 | [Playwright](https://playwright.dev) | Testes de navegador e gravação do trailer (só desenvolvimento) | Apache 2.0 |
 
 ## Código

@@ -45,7 +45,9 @@ Com Node.js 18+ instalado, rode `jogar-no-wifi.cmd` (Windows) ou:
 npm run lan
 ```
 
-O terminal mostra um endereço como `http://192.168.x.x:8080`. Abra esse endereço no celular ou em outro computador da mesma rede, crie uma sala em um aparelho e entre pelo outro.
+O terminal mostra um endereço como `http://192.168.x.x:8080`. Abra esse endereço no celular ou em outro computador da mesma rede, crie uma sala em um aparelho e entre pelo outro: leia o QR Code da sala, digite o código ou toque na sala em "Salas Abertas".
+
+O servidor entrega o three.js e as fontes a partir do próprio computador, então o segundo aparelho não precisa de internet, só do mesmo Wi-Fi. Só o aparelho que criou a sala pode excluí-la; salas abandonadas saem da lista sozinhas.
 
 ### Duelo online
 
@@ -85,12 +87,14 @@ npm run verify:artifact   # abre o arquivo isolado: zero erro de console e zero 
 | `npm run test:rules` | Regras, RNG com semente, textos PT-BR | 46/46 |
 | `npm run test:pvp` | Protocolo PvP com latência, perdas, duplicatas, refresh, desconexão e trapaça | 29/29 |
 | `npm run test:artifact` | Transporte sobre `db` e `room`, com as regras de acesso aplicadas | 17/17 |
-| `npm run test:ui` | Gerador de QR code | 16/16 |
+| `npm run test:ui` | Gerador de QR code e papéis de anfitrião e convidado na aba Online | 21/21 |
+| `npm run test:lan:server` | Regras do servidor Wi-Fi: dono da sala, salas ociosas, nada carregado de fora | 20/20 |
 | `npm run test:e2e` | Partida completa no Chrome headless: PvC, técnicas, série e PvP em duas abas | 50/50 |
 | `npm run test:lan` | Servidor Wi-Fi com dois navegadores | 10/10 |
+| `npm run test:lan:real` | Caminho real no Wi-Fi: convidado pelo IP da rede, link do QR Code, cliques de verdade, hosts externos bloqueados (leva alguns minutos) | 17/17 |
 | `npm run test:sim` | 200.000 partidas CPU × CPU em todas as combinações; relatório em [tests/sim-report.md](tests/sim-report.md) | faixas aprovadas |
 
-`npm test` roda as suítes unitárias, o build e os E2E. O CI do GitHub roda a checagem de vazamentos e as suítes que não precisam de navegador.
+`npm test` roda as suítes unitárias, o build e os E2E. O CI do GitHub roda a checagem de vazamentos, as suítes que não precisam de navegador e, em um job separado, o caminho real no Wi-Fi com o Chrome do runner.
 
 Disparos médios até a vitória no 10×10 (simulação): Grumete 95,4 · Marujo 56,1 · Capitão 47,8 · Yonkou 42,3. Primeiro jogador entre IAs iguais vence 49,1% das vezes.
 

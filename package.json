@@ -34,6 +34,7 @@
     "test:peer": "node tests/peer-transport-test.js",
     "test:lan:real": "node tests/lan-real-path-verify.js",
     "fonts": "node scripts/fetch-fonts.js",
+    "assets": "node scripts/optimize-assets.js",
     "test:picking": "node tests/critic/picking.mjs",
     "test:legacy": "node legacy/tests/run.mjs",
     "build:demo": "node tools/build.js --legacy --out dist/full.html",

@@ -97,8 +97,8 @@ npm run verify:artifact   # abre o arquivo isolado: zero erro de console e zero 
 | `npm run test:pvp` | Protocolo PvP com latência, perdas, duplicatas, refresh, desconexão e trapaça | 29/29 |
 | `npm run test:artifact` | Transporte sobre `db` e `room`, com as regras de acesso aplicadas | 17/17 |
 | `npm run test:ui` | Gerador de QR code e papéis de anfitrião e convidado na aba Online | 21/21 |
-| `npm run test:lan:server` | Regras do servidor Wi-Fi: dono da sala, salas ociosas, nada carregado de fora | 20/20 |
-| `npm run test:peer` | Regras do transporte WebRTC com um broker em memória: anfitrião como centro da sala, reconexão, fechamento | 36/36 |
+| `npm run test:lan:server` | Regras do servidor Wi-Fi: dono da sala, assentos, salas ociosas, nada carregado de fora | 32/32 |
+| `npm run test:peer` | Regras do transporte WebRTC com um broker em memória: anfitrião como centro da sala, assentos, reconexão, fechamento | 43/43 |
 | `npm run test:e2e` | Partida completa no Chrome headless: PvC, técnicas, série e PvP em duas abas | 50/50 |
 | `npm run test:lan` | Servidor Wi-Fi com dois navegadores | 10/10 |
 | `npm run test:lan:real` | Caminho real no Wi-Fi: convidado pelo IP da rede, link do QR Code, cliques de verdade, hosts externos bloqueados (leva alguns minutos) | 17/17 |
@@ -125,7 +125,8 @@ src/
   ships/        modelos voxel dos 7 navios, bandeiras e frota 3D
   fx/           tiros, partículas, fogos, clima e cartaz de PROCURADO
   sea/          ponte entre o jogo e o renderer
-assets/         ilustrações usadas pela interface (embutidas no build de artefato)
+assets/         ilustrações carregadas pelo jogo, já redimensionadas (geradas por `npm run assets`)
+assets-src/     ilustrações originais em resolução cheia (não publicadas)
 scripts/        build, build de artefato, servidor Wi-Fi, verificações e checagem de vazamentos
 tests/          suítes headless, E2E, fakes de transporte e sondas de revisão visual
 tools/          harness de screenshots, comparação cega, trailer e three.js vendorizado
@@ -148,11 +149,10 @@ legacy/         código da primeira versão, mantido como referência
 
 - O PvP online foi validado contra um fake fiel das regras de acesso, mas ainda não entre duas contas reais na plataforma.
 - O PvP por WebRTC foi validado entre dois navegadores no mesmo computador, pelo serviço público de sinalização; falta validar entre redes diferentes e em celular. Não há teste automático de navegador para esse caminho.
-- No Wi-Fi e no WebRTC qualquer aparelho que conheça o código da sala pode publicar eventos nela; só o fechamento da sala é restrito a quem a criou.
+- Os assentos são verificados por quem guarda a sala (o servidor Wi-Fi ou o navegador do anfitrião no WebRTC). No WebRTC o anfitrião é também o árbitro: um anfitrião com o jogo modificado poderia aceitar eventos falsos do próprio lado. O compromisso SHA-256 da frota continua valendo para os dois.
 - 60 qps em celular e uso de memória em sessão longa ainda não foram medidos.
-- Alguns textos ficam cortados em telas de celular e tablet.
 - Revanche na mesma sala online não funciona; é preciso criar outra sala.
-- Campanha, bênçãos e perigos são cosméticos na v2.
+- Campanha, bênçãos e perigos são cosméticos na v2: as bênçãos são relíquias de coleção e o jogo diz isso ao abrir uma.
 
 A lista completa está na [auditoria final](docs/project/FINAL-REPORT.md) e no [CHANGELOG](CHANGELOG.md).
 

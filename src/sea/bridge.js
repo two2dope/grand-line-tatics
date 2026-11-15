@@ -26,7 +26,9 @@
   const CREW = { straw_hats: 'strawHat', whitebeard: 'whitebeard', red_haired: 'redHair', heart: 'heart', blackbeard: 'blackbeard', marines: 'marine' };
   const SEA_OF = { mar_calmo: 'calmo', grand_line: 'grandline', novo_mundo: 'novomundo', tempestade: 'tempestade', marineford: 'calmo' };
   const SEA_OF_TOD = { day: 'calmo', dusk: 'grandline', night: 'novomundo', storm: 'tempestade' };
-  const BIOME_OF = { mar_calmo: 'loguetown', grand_line: 'alabasta', novo_mundo: 'skypiea', tempestade: 'water7' };
+  const BIOME_OF = { mar_calmo: 'loguetown', grand_line: 'alabasta', novo_mundo: 'skypiea', tempestade: 'water7', marineford: 'marineford' };
+  // Sky images that exist in assets/backgrounds: any other key would request a missing file.
+  const BIOME_IMAGES = { loguetown: 1, alabasta: 1, skypiea: 1, water7: 1, marineford: 1 };
   const BIOME_OF_TOD = { day: 'loguetown', dusk: 'alabasta', night: 'skypiea', storm: 'water7' };
   const MODE_OF = { duas_aguas: 'both', minhas_aguas: 'own', mira_inimiga: 'aim', panorama: 'panorama', ceremony: 'ceremony', cerimonia: 'ceremony' };
   const MARK_OF = { water: 1, hit: 2, sunk: 3, revealed: 4, fog: 5 };
@@ -340,7 +342,7 @@
         S().lighting.setTod(tod, { instant: !durationMs });
         S().ocean.setSea(SEA_OF[biomeKey] || SEA_OF_TOD[tod]);
         if (S().weather) S().weather.set({ tod, sea: SEA_OF[biomeKey] || SEA_OF_TOD[tod] });   // rain, spray, lightning
-        setBiome(BIOME_OF[biomeKey] || (biomeKey && !SEA_OF[biomeKey] ? biomeKey : BIOME_OF_TOD[tod]));
+        setBiome(BIOME_OF[biomeKey] || (BIOME_IMAGES[biomeKey] ? biomeKey : BIOME_OF_TOD[tod]));
       },
       setCameraPreset(name, durationMs) { cameraController.setPreset(name, durationMs); },
       setBoardSize(size) {

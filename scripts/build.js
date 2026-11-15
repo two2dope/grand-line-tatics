@@ -738,15 +738,18 @@ button {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 12px 14px;
+  padding: 9px 10px;
 }
 
+/* The pane keeps a 4px gutter of its own: focus rings and the glow of a selected card are
+   drawn outside the control and were cut by the pane edge. */
 .glt-tab-pane {
   display: none;
   flex-direction: column;
   gap: 11px;
   max-width: 100%;
   overflow-x: hidden;
+  padding: 3px 4px;
 }
 
 .glt-tab-pane.active {
@@ -763,7 +766,7 @@ button {
 /* Sticky / Prominent Start Battle CTA Bar */
 .glt-setup-cta-bar {
   position: sticky;
-  top: -12px;
+  top: -9px;
   z-index: 6;
   background: var(--panel-bg);
   padding: 4px 0 8px 0;
@@ -1187,6 +1190,40 @@ input[type="range"] {
 }
 
 /* Live Fleet Mini-Summary Strip in Combat Panel */
+.glt-radar-view-row {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+}
+
+.glt-radar-view-btn {
+  flex: 1;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 6px 8px;
+  min-height: 32px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.glt-radar-view-btn.active {
+  background: rgba(245, 166, 35, 0.16);
+  border-color: var(--gold-bright);
+  color: var(--gold-bright);
+}
+
+.glt-battle-panel .glt-radar-grid-wrapper {
+  align-self: center;
+  width: 100%;
+}
+
 .glt-fleet-summary-strip {
   display: flex;
   justify-content: space-between;
@@ -2191,6 +2228,53 @@ input[type="range"] {
   .glt-keyboard-help {
     display: none;
   }
+
+  /* In battle the radar is the main control: the panel takes the larger share. */
+  #glt-workspace:has(#content-tab-gameplay.active .glt-battle-panel) .glt-viewport-container:not(.panel-collapsed) {
+    height: 38%;
+  }
+
+  #glt-workspace:has(#content-tab-gameplay.active .glt-battle-panel) .glt-side-panel:not(.collapsed) {
+    height: 62%;
+  }
+
+  /* Firing row first and compact, the enemy radar right under it at full width; the rest
+     (view switch, fleet count, own waters, reactions) follows below the fold. */
+  .glt-battle-panel {
+    gap: 7px;
+  }
+
+  .glt-battle-panel > * {
+    order: 3;
+  }
+
+  .glt-battle-panel > .glt-battle-triggers {
+    order: 1;
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    gap: 5px;
+  }
+
+  .glt-battle-panel > .glt-battle-triggers .btn-fire {
+    grid-column: auto;
+    font-size: 11px;
+    padding: 9px 6px;
+    letter-spacing: 0.5px;
+  }
+
+  .glt-battle-panel > .glt-battle-triggers .glt-btn {
+    min-height: 40px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .glt-battle-panel > .glt-radar-grid-wrapper:not(.glt-mini-radar) {
+    order: 2;
+    padding: 4px 6px;
+    gap: 2px;
+  }
 }
 
 @media (max-width: 520px) {
@@ -3067,6 +3151,39 @@ input[type="range"] {
 }
 
 /* Blessing Inspector Modal */
+.glt-blessing-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(3, 8, 18, 0.78);
+}
+
+.glt-blessing-lightbox .glt-blessing-inspector-modal {
+  background: var(--panel-bg);
+  border: 2px solid var(--gold-bright);
+  border-radius: 10px;
+  padding: 14px;
+  width: min(440px, 100%);
+  max-height: 92dvh;
+  overflow-y: auto;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.82);
+}
+
+.glt-blessing-inspector-modal.is-locked .blessing-inspector-img {
+  filter: grayscale(0.85) brightness(0.7);
+}
+
+.blessing-inspector-note {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin: 2px 0 8px;
+}
+
 .glt-blessing-inspector-modal {
   max-width: 440px;
   width: 100%;
@@ -3478,6 +3595,26 @@ input[type="range"] {
   pointer-events: auto;
   max-width: calc(100vw - 32px);
   overflow-x: auto;
+}
+
+/* Den Den Mushi reactions over the board while the side panel is collapsed */
+.glt-float-reactions {
+  position: absolute;
+  bottom: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(360px, calc(100% - 20px));
+  padding: 8px;
+  background: rgba(11, 27, 51, 0.96);
+  border: 2px solid var(--border-brass);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65);
+  z-index: 61;
+}
+
+.glt-theme-light .glt-float-reactions {
+  background: rgba(243, 232, 207, 0.98);
+  border-color: var(--border-highlight);
 }
 
 .glt-theme-light .glt-floating-action-bar {

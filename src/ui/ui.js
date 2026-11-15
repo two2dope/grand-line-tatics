@@ -700,6 +700,12 @@
         pane.classList.toggle('active', pane.id === 'content-' + tabId);
       });
 
+      // The panes share one scroll box: without this a tab opens scrolled to wherever the last one was.
+      var scrollBox = this.dom.tabGameplay ? this.dom.tabGameplay.parentNode : null;
+      if (scrollBox && this._shownTabId !== tabId) scrollBox.scrollTop = 0;
+      this._shownTabId = tabId;
+      if (this.gamePhase === 'BATTLE' && typeof this.fitBattleRadar === 'function') this.fitBattleRadar();
+
       if (this.audio) this.audio.playUiClick();
     },
 
@@ -789,10 +795,31 @@
       if (!bar) return;
 
       var shouldShow = this.isSidePanelCollapsed;
+      var oldPopover = doc ? doc.getElementById('glt-float-reactions') : null;
+      if (oldPopover && oldPopover.parentNode) oldPopover.parentNode.removeChild(oldPopover);
+      if (!shouldShow || !this.isPvpMode || this.gamePhase !== 'BATTLE') this.floatReactionsOpen = false;
       if (!shouldShow) {
         bar.style.display = 'none';
         if (restoreBtn) restoreBtn.style.display = 'none';
         return;
+      }
+
+      if (this.floatReactionsOpen && bar.parentNode && typeof this.buildReactionsGridDom === 'function') {
+        var selfPop = this;
+        var popover = document.createElement('div');
+        popover.id = 'glt-float-reactions';
+        popover.className = 'glt-float-reactions';
+        popover.setAttribute('role', 'group');
+        popover.setAttribute('aria-label', getT().reactions.reactionsPopoverAria || 'Den Den Mushi');
+        popover.appendChild(this.buildReactionsGridDom());
+        popover.addEventListener('click', function(ev) {
+          var hit = ev.target && ev.target.closest ? ev.target.closest('.glt-reaction-btn') : null;
+          if (!hit) return;
+          // One reaction per opening: send it and get out of the way of the board.
+          selfPop.floatReactionsOpen = false;
+          setTimeout(function() { selfPop.renderFloatingControls(); }, 250);
+        });
+        bar.parentNode.appendChild(popover);
       }
 
       if (restoreBtn) restoreBtn.style.display = 'inline-flex';
@@ -916,10 +943,13 @@
           var reactBtn = document.createElement('button');
           reactBtn.type = 'button';
           reactBtn.className = 'glt-float-btn';
+          reactBtn.id = 'btn-float-den-den';
           reactBtn.innerHTML = '🐌 <span>Den Den</span>';
+          reactBtn.setAttribute('aria-haspopup', 'true');
+          reactBtn.setAttribute('aria-expanded', self.floatReactionsOpen ? 'true' : 'false');
           reactBtn.addEventListener('click', function() {
-            self.toggleSidePanelCollapse(false);
-            self.switchTab('tab-pvp');
+            self.floatReactionsOpen = !self.floatReactionsOpen;
+            self.renderFloatingControls();
           });
           bar.appendChild(reactBtn);
         }
@@ -1121,6 +1151,23 @@
         });
         this.renderer.setSize(width, height);
         this.renderer.setPixelRatio(1);
+
+        // Phones drop the GPU context under memory pressure. Without preventDefault the browser
+        // never gives it back and the page is left dead; with it, the context returns. An online
+        // match then reloads and resumes from its session (render targets do not survive the loss).
+        var uiSelf = this;
+        canvas.addEventListener('webglcontextlost', function(ev) {
+          ev.preventDefault();
+          uiSelf.announce(getT().ui.graphicsLost);
+        }, false);
+        canvas.addEventListener('webglcontextrestored', function() {
+          if (uiSelf.pvpRoomId && uiSelf.pvpClient) {
+            uiSelf.savePvpSession();
+            window.location.reload();
+            return;
+          }
+          uiSelf.announce(getT().ui.graphicsRestored);
+        }, false);
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -1189,6 +1236,7 @@
     },
 
     handleResize: function() {
+      if (this.gamePhase === 'BATTLE' && typeof this.fitBattleRadar === 'function') this.fitBattleRadar();
       if (!this.webglAvailable || !this.dom.canvas || !this.renderer) return;
       var container = this.dom.canvas.parentElement;
       var width = Math.max(1, container.clientWidth || window.innerWidth);
@@ -2532,21 +2580,38 @@
           this.announce(T.errors.techniqueAlreadyUsed);
           return;
         }
-        var myCrew = GLT.rules.CREWS_MAP[this.matchConfig.crewId] || GLT.rules.CREWS_MAP.straw_hats;
+        if (pState.pendingShot || pState.pendingTech) {
+          this.announce(T.errors.techniqueBusy);
+          return;
+        }
+        // The crew the fleet was committed with, not whatever the Combate tab shows now.
+        var committedCrewId = (pState.players[myIdx] && pState.players[myIdx].crewId) || this.matchConfig.crewId;
+        var myCrew = GLT.rules.CREWS_MAP[committedCrewId] || GLT.rules.CREWS_MAP.straw_hats;
         var pvpTechId = myCrew.technique;
+        var sendTech = function(params) {
+          try {
+            self.pvpClient.useTechnique(pvpTechId, params);
+          } catch (err) {
+            self.announce((err && err.message) || T.errors.notYourTurn);
+          }
+          self.renderGameplayTab();
+        };
 
         if (pvpTechId === 'room') {
           this.showRoomSelectorModal(function(axis, index) {
-            self.pvpClient.useTechnique('room', { axis: axis, index: index });
+            sendTech({ axis: axis, index: index });
           });
           return;
         }
         if (pvpTechId === 'vortice' || pvpTechId === 'observacao') {
-          this.pvpClient.useTechnique(pvpTechId, { seed: pState.matchConfig.seed + '_' + pState.turnNumber });
+          sendTech({ seed: pState.matchConfig.seed + '_' + pState.turnNumber });
           return;
         }
-        var aim = this.selectedAimCell || { r: 1, c: 1 };
-        this.pvpClient.useTechnique(pvpTechId, { r: aim.r, c: aim.c });
+        if (!this.selectedAimCell) {
+          this.announce(T.errors.techniqueNeedsTarget);
+          return;
+        }
+        sendTech({ r: this.selectedAimCell.r, c: this.selectedAimCell.c });
         return;
       }
 
@@ -2579,9 +2644,13 @@
         return;
       }
 
-      // Spatial techniques (bazooka, tremor, haki_do_rei): execute immediately at selectedAimCell
-      var target = this.selectedAimCell || { r: 1, c: 1 };
-      this.executePlayerTechnique({ r: target.r, c: target.c });
+      // Spatial techniques (bazooka, tremor, haki_do_rei): execute at the selected cell.
+      // The technique is single-use: never spend it on a cell the player did not pick.
+      if (!this.selectedAimCell) {
+        this.announce(T.errors.techniqueNeedsTarget);
+        return;
+      }
+      this.executePlayerTechnique({ r: this.selectedAimCell.r, c: this.selectedAimCell.c });
     },
 
     executePlayerTechnique: function(arg1, arg2) {
@@ -3040,8 +3109,15 @@
             '</div>' +
           '</div>';
 
-        blessingReward.querySelector('.glt-blessing-card-preview').addEventListener('click', function() {
+        var rewardCard = blessingReward.querySelector('.glt-blessing-card-preview');
+        rewardCard.addEventListener('click', function() {
           self.openBlessingInspectorModal(wonBlessing.id);
+        });
+        rewardCard.addEventListener('keydown', function(ev) {
+          if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            self.openBlessingInspectorModal(wonBlessing.id);
+          }
         });
 
         ceremonyBox.appendChild(blessingReward);
@@ -3338,6 +3414,7 @@
       this.pvpRole = 'player';
       this.pvpSyncedShots = {};
       this.pvpLastReactionCount = 0;
+      this.pvpLastTechCount = 0;
       if (s.playerId) this.pvpPlayerId = s.playerId;
       if (s.boardId) this.matchConfig.boardId = s.boardId;
       if (s.crewId) this.matchConfig.crewId = s.crewId;
@@ -3556,6 +3633,7 @@
       this.pvpRole = 'player';
       this.pvpSyncedShots = {};
       this.pvpLastReactionCount = 0;
+      this.pvpLastTechCount = 0;
 
       var bSize = (GLT.rules.BOARDS_MAP[this.matchConfig.boardId] || { size: 10 }).size;
       var roomCfg = {
@@ -3617,6 +3695,7 @@
       this.pvpRole = joinRole;
       this.pvpSyncedShots = {};
       this.pvpLastReactionCount = 0;
+      this.pvpLastTechCount = 0;
 
       function abortJoin(message) {
         if (transport && typeof transport.destroy === 'function') transport.destroy();
@@ -3646,7 +3725,9 @@
         // relay and the cross-tab channel have no such gate, so the lobby checks before joining.
         if (backendKind !== 'artifactDb') {
           if (!roomExists) {
-            return abortJoin(backendKind === 'peer' ? T.lobby.peerRoomNotFound(cleanCode) : T.lobby.roomNotFound(cleanCode));
+            return abortJoin(backendKind === 'peer'
+              ? T.lobby.peerRoomNotFound(cleanCode)
+              : (backendKind === 'broadcastChannel' ? T.lobby.roomNotFoundLocalPage(cleanCode) : T.lobby.roomNotFound(cleanCode)));
           }
           if (joinRole === 'player' && otherGuest) return abortJoin(T.lobby.roomFull(cleanCode));
         }
@@ -3909,10 +3990,13 @@
         this.pvpSyncedShots = {};
         this.pvpForfeitLogged = false;
         this.pvpLastReactionCount = 0;
+        this.pvpLastTechCount = 0;
+        this.playerRevealedCells = [];
         this.selectedAimCell = null;
         this.isUsingTechnique = false;
         if (this.platesSystem) {
           this.platesSystem.seaPlates.clearShotMarkers();
+          this.platesSystem.seaPlates.setShipFoamCells(0, []);
           this.platesSystem.seaPlates.setShipFoamCells(1, []);
           this.platesSystem.seaPlates.hideValidityGhost();
         }
@@ -3964,6 +4048,9 @@
             this.platesSystem.setEnvironment(this.seaToEnvProfile(this.matchConfig.sea), 800, this.matchConfig.sea);
           }
           this.platesSystem.seaPlates.clearShotMarkers();
+          // Both plates: a guest places its fleet on plate 0 in the lobby and fights on plate 1,
+          // so the foam of the lobby placement would stay behind on what is now the enemy waters.
+          this.platesSystem.seaPlates.setShipFoamCells(0, []);
           this.platesSystem.seaPlates.setShipFoamCells(1, []);
         }
         this.syncPlayerFleetTo3d();
@@ -3973,6 +4060,7 @@
 
       // Sync shots onto 3D seaPlates & logbook
       if (state.phase === 'playing' || state.phase === 'game_over') {
+        this.syncPvpTechFeed(state, myIdx);
         this.syncPvpBoardVisuals(state, myIdx, oppIdx);
         this.updateTopHudStatus();
         this.renderGameplayTab();
@@ -4000,6 +4088,59 @@
       }
 
       this.renderPvpTab();
+    },
+
+    /**
+     * Techniques in online play: every use lands in state.feed. Shows what happened (banner,
+     * logbook line, screen-reader announcement) and, for the player's own Observação, marks
+     * the revealed cell on the radar. A replay after a refresh rebuilds the marks without banners.
+     */
+    syncPvpTechFeed: function(state, myIdx) {
+      var T = getT();
+      var techFeed = (state.feed || []).filter(function(f) { return f && f.techId; });
+      var seen = this.pvpLastTechCount || 0;
+      if (techFeed.length <= seen) return;
+      var live = techFeed.length - seen === 1;
+
+      for (var ti = seen; ti < techFeed.length; ti++) {
+        var tf = techFeed[ti];
+        var tDef = (T.techniques && T.techniques[tf.techId]) || {};
+        var res = tf.result || {};
+        var params = tf.params || {};
+        var mine = !!this.pvpClient && this.pvpClient.role === 'player' && tf.shooterIndex === myIdx;
+        var detail = '';
+
+        if (tf.techId === 'haki_do_rei' && typeof res.sonarDetected === 'boolean') {
+          detail = res.sonarDetected ? tDef.sonarPositive : tDef.sonarNegative;
+        } else if (tf.techId === 'room' && typeof res.rowColCount === 'number' && typeof params.index === 'number') {
+          detail = params.axis === 'col'
+            ? tDef.colCountMsg(String(params.index + 1), res.rowColCount)
+            : tDef.rowCountMsg(String.fromCharCode(65 + params.index), res.rowColCount);
+        } else if (tf.techId === 'observacao' && res.revealedCell) {
+          detail = tDef.revealedMsg(GLT.rules.coordToLabel(res.revealedCell.r, res.revealedCell.c));
+        }
+
+        var body = [tDef.usedMsg, detail].filter(Boolean).join(' ');
+        var who = (state.players[tf.shooterIndex] && state.players[tf.shooterIndex].nickname) || T.ui.turnIndicatorEnemyDefault;
+        var line = mine ? T.ui.techniqueActivated(body) : T.ui.rivalTechniqueLine(who, body);
+        this.appendLogBookEntry(line);
+        this.announce(line);
+
+        if (mine && tf.techId === 'observacao' && res.revealedCell) {
+          var rev = res.revealedCell;
+          var known = this.playerRevealedCells.some(function(c) { return c.r === rev.r && c.c === rev.c; });
+          if (!known) this.playerRevealedCells.push({ r: rev.r, c: rev.c });
+          var plates = this.getMyPlatesIndices();
+          if (this.platesSystem) {
+            this.platesSystem.seaPlates.addShotMarker(plates.oppPlate, rev.r, rev.c, 'revealed');
+            if (live) this.platesSystem.seaPlates.setSelection(plates.oppPlate, rev.r, rev.c);
+          }
+          if (live) this.selectedAimCell = { r: rev.r, c: rev.c };
+        }
+
+        if (live && typeof this.showTechniqueBanner === 'function') this.showTechniqueBanner(tf.techId);
+      }
+      this.pvpLastTechCount = techFeed.length;
     },
 
     syncPvpBoardVisuals: function(state, myIdx, oppIdx) {
@@ -4682,8 +4823,30 @@
         // Primary 2D Tactical Radar (Enemy Waters) + Compact Defense Status Radar (My Waters)
         if (this.show2dRadar) {
           var radarPlates = this.getMyPlatesIndices();
+          var radarView = this.getRadarView();
+
+          var viewRow = document.createElement('div');
+          viewRow.className = 'glt-radar-view-row';
+          viewRow.setAttribute('role', 'group');
+          viewRow.setAttribute('aria-label', T.ui.radarViewLabel || 'Radar');
+          [['enemy', T.ui.radarViewEnemy || 'Águas Inimigas'], ['both', T.ui.radarViewBoth || 'Ambas']].forEach(function(opt) {
+            var vBtn = document.createElement('button');
+            vBtn.type = 'button';
+            vBtn.className = 'glt-radar-view-btn' + (radarView === opt[0] ? ' active' : '');
+            vBtn.dataset.radarView = opt[0];
+            vBtn.setAttribute('aria-pressed', radarView === opt[0] ? 'true' : 'false');
+            vBtn.textContent = opt[1];
+            vBtn.addEventListener('click', function() {
+              self.setRadarView(opt[0]);
+            });
+            viewRow.appendChild(vBtn);
+          });
+          battlePanel.appendChild(viewRow);
+
           battlePanel.appendChild(this.build2dRadarGrid(radarPlates.oppPlate, false, false));
-          battlePanel.appendChild(this.build2dRadarGrid(radarPlates.myPlate, false, true));
+          if (radarView === 'both') {
+            battlePanel.appendChild(this.build2dRadarGrid(radarPlates.myPlate, false, true));
+          }
         }
 
         // Quick Den Den Mushi Reactions inside active Online PvP Battle
@@ -4714,10 +4877,54 @@
         }
 
         container.appendChild(battlePanel);
+        this.fitBattleRadar();
       }
 
       this.renderFloatingControls();
       this.renderHudMinimap();
+    },
+
+    isNarrowLayout: function() {
+      return typeof window !== 'undefined' && typeof window.matchMedia === 'function' &&
+        window.matchMedia('(max-width: 900px)').matches;
+    },
+
+    /** 'enemy' = only the waters being attacked; 'both' = own waters below. Phones start on 'enemy'. */
+    getRadarView: function() {
+      if (this.radarView !== 'enemy' && this.radarView !== 'both') {
+        var saved = null;
+        try { saved = localStorage.getItem('glt_radar_view'); } catch (_) {}
+        this.radarView = (saved === 'enemy' || saved === 'both') ? saved : (this.isNarrowLayout() ? 'enemy' : 'both');
+      }
+      return this.radarView;
+    },
+
+    setRadarView: function(view) {
+      this.radarView = view === 'both' ? 'both' : 'enemy';
+      try { localStorage.setItem('glt_radar_view', this.radarView); } catch (_) {}
+      this.renderGameplayTab();
+      if (this.audio) this.audio.playUiClick();
+    },
+
+    /**
+     * Stacked layout (phone, narrow window): the enemy radar is sized so that the whole grid
+     * fits in the visible part of the panel, with no scrolling to reach a row.
+     */
+    fitBattleRadar: function() {
+      var pane = this.dom && this.dom.tabGameplay;
+      if (!pane || typeof pane.querySelector !== 'function') return;
+      var radar = pane.querySelector('.glt-battle-panel .glt-radar-grid-wrapper:not(.glt-mini-radar)');
+      if (!radar || !radar.style) return;
+      radar.style.maxWidth = '';
+      var wrap = pane.parentNode;
+      if (!this.isNarrowLayout() || !wrap || typeof radar.getBoundingClientRect !== 'function') return;
+      var width = radar.offsetWidth;
+      if (!width || !wrap.clientHeight) return; // tab not on screen
+      var topInContent = radar.getBoundingClientRect().top - wrap.getBoundingClientRect().top + wrap.scrollTop;
+      var frame = radar.offsetHeight - width; // title and padding around the square grid
+      var room = wrap.clientHeight - topInContent - 12 - frame;
+      var fitted = Math.max(230, Math.floor(room));
+      if (fitted < width) radar.style.maxWidth = fitted + 'px';
     },
 
     /**
@@ -5768,6 +5975,12 @@
             item.addEventListener('click', function() {
               self.openBlessingInspectorModal(b.id);
             });
+            item.addEventListener('keydown', function(ev) {
+              if (ev.key === 'Enter' || ev.key === ' ') {
+                ev.preventDefault();
+                self.openBlessingInspectorModal(b.id);
+              }
+            });
             bGrid.appendChild(item);
           });
           blessSection.appendChild(bGrid);
@@ -6436,24 +6649,61 @@
       var blessing = bList.find(function(b) { return b.id === blessingId; }) || bList[0];
       if (!blessing) return;
 
+      var unlocked = [];
+      try { unlocked = JSON.parse(localStorage.getItem('glt_unlocked_blessings') || '[]'); } catch (_) {}
+      var isUnlocked = unlocked.indexOf(blessing.id) !== -1;
+
+      var old = document.getElementById('glt-blessing-lightbox');
+      if (old && old.parentNode) old.parentNode.removeChild(old);
+      var opener = document.activeElement;
+
+      // Own layer above the regular modal: opening a blessing from the victory screen must not
+      // replace that screen (the poster and the rematch button live there).
+      var layer = document.createElement('div');
+      layer.id = 'glt-blessing-lightbox';
+      layer.className = 'glt-blessing-lightbox';
+      layer.setAttribute('role', 'dialog');
+      layer.setAttribute('aria-modal', 'true');
+      layer.setAttribute('aria-labelledby', 'glt-blessing-lightbox-title');
+
       var wrap = document.createElement('div');
-      wrap.className = 'glt-blessing-inspector-modal';
+      wrap.className = 'glt-blessing-inspector-modal' + (isUnlocked ? '' : ' is-locked');
       wrap.innerHTML =
         '<div class="blessing-inspector-card">' +
           '<img class="blessing-inspector-img" src="' + blessing.image + '" alt="' + blessing.name + '">' +
           '<div class="blessing-inspector-info">' +
-            '<div class="blessing-type-badge">' + blessing.badge + '</div>' +
-            '<h3 class="blessing-inspector-title">' + blessing.name + '</h3>' +
+            '<div class="blessing-type-badge">' + (isUnlocked ? T.ui.blessingUnlockedBadge : T.ui.blessingLockedBadge) + ' · ' + blessing.badge + '</div>' +
+            '<h3 class="blessing-inspector-title" id="glt-blessing-lightbox-title">' + blessing.name + '</h3>' +
             '<p class="blessing-inspector-desc">' + blessing.desc + '</p>' +
+            '<p class="blessing-inspector-note">' + (isUnlocked ? T.ui.blessingCollectibleNote : T.ui.blessingLockedHint) + '</p>' +
             '<button type="button" class="glt-btn btn-secondary glt-btn-close-blessing">' + (T.ui.closeModal || 'Fechar') + '</button>' +
           '</div>' +
         '</div>';
+      layer.appendChild(wrap);
 
-      wrap.querySelector('.glt-btn-close-blessing').addEventListener('click', function() {
-        self.hideModal();
-      });
+      function close() {
+        document.removeEventListener('keydown', onKey, true);
+        if (layer.parentNode) layer.parentNode.removeChild(layer);
+        if (opener && typeof opener.focus === 'function') opener.focus();
+      }
+      function onKey(ev) {
+        if (ev.key === 'Escape') {
+          ev.preventDefault();
+          ev.stopPropagation();
+          close();
+        } else if (ev.key === 'Tab') {
+          ev.preventDefault(); // one control inside: focus stays on it
+          closeBtn.focus();
+        }
+      }
+      var closeBtn = wrap.querySelector('.glt-btn-close-blessing');
+      closeBtn.addEventListener('click', close);
+      layer.addEventListener('click', function(ev) { if (ev.target === layer) close(); });
+      document.addEventListener('keydown', onKey, true);
 
-      this.showModal(blessing.name, wrap, 'modal-blessing-inspect');
+      (this.dom.appRoot || document.body).appendChild(layer);
+      closeBtn.focus();
+      if (this.audio && typeof this.audio.playUiClick === 'function') this.audio.playUiClick();
     },
 
     startRenderLoop: function() {

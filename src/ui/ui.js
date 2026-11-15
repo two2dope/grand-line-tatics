@@ -4185,6 +4185,10 @@
         var setupForm = document.createElement('div');
         setupForm.className = 'glt-setup-panel';
 
+        // Inside a PvP room the rules are the room's: shown here, changed only by leaving.
+        var rulesLocked = !!this.pvpRoomId;
+        this._rulesLockShown = rulesLocked;
+
         var shipsList = GLT.rules.getShipsForBoard(this.matchConfig.boardId, this.matchConfig.crewId);
         var totalShips = shipsList.length;
         var allPlaced = this.placedPlayerFleet.length >= totalShips;
@@ -4253,7 +4257,17 @@
             (sealUrl ? '<img class="crew-seal-stamp" src="' + sealUrl + '" alt="" loading="lazy">' : '');
 
           cBtn.addEventListener('click', function() {
+            var roomClient = (self.pvpRoomId && self.pvpClient && self.pvpClient.role === 'player') ? self.pvpClient : null;
+            var roomSeat = roomClient && roomClient.state && roomClient.state.players
+              ? roomClient.state.players[roomClient.playerIndex]
+              : null;
+            if (roomSeat && roomSeat.ready) {
+              // The committed fleet belongs to the crew it was committed with.
+              self.announce(T.lobby.crewLockedAfterCommit);
+              return;
+            }
             self.matchConfig.crewId = c.id;
+            if (roomClient && typeof roomClient.selectCrew === 'function') roomClient.selectCrew(c.id);
             if (self.matchConfig.enemyCrewId === c.id) {
               self.matchConfig.enemyCrewId = c.id === 'marines' ? 'straw_hats' : 'marines';
             }
@@ -4265,6 +4279,7 @@
 
             self.renderGameplayTab();
             self.renderFleetTab();
+            if (self.dom.tabPvp) self.renderPvpTab();
             if (self.audio) self.audio.playUiClick();
           });
           crewGrid.appendChild(cBtn);
@@ -4273,7 +4288,7 @@
         setupForm.appendChild(crewGroup);
 
         // Helper for labelled <select> columns
-        function makeSelectCol(selectId, labelText, optionsArr, currentVal, onChangeFn) {
+        function makeSelectCol(selectId, labelText, optionsArr, currentVal, onChangeFn, locked) {
           var col = document.createElement('div');
           col.className = 'glt-col';
           var lbl = document.createElement('label');
@@ -4288,8 +4303,13 @@
             opt.selected = String(o.value) === String(currentVal);
             sel.appendChild(opt);
           });
+          if (locked) {
+            sel.disabled = true;
+            sel.title = T.lobby.rulesLockedByRoom(self.pvpRoomId);
+          }
           sel.addEventListener('change', function() {
             onChangeFn(sel.value);
+            self.onMatchConfigChanged();
           });
           col.appendChild(lbl);
           col.appendChild(sel);
@@ -4303,7 +4323,7 @@
         rowRivalDiff.appendChild(makeSelectCol(
           'sel-enemy-crew',
           T.ui.selectEnemyCrewPrompt,
-          GLT.rules.CREWS.map(function(c) { return { value: c.id, label: c.name + ' (' + c.captain + ')' }; }),
+          GLT.rules.CREWS.map(function(c) { return { value: c.id, label: c.name }; }),
           this.matchConfig.enemyCrewId,
           function(val) {
             self.matchConfig.enemyCrewId = val;
@@ -4328,6 +4348,14 @@
         ));
         setupForm.appendChild(rowRivalDiff);
 
+        if (rulesLocked) {
+          var lockNote = document.createElement('p');
+          lockNote.id = 'glt-rules-locked-note';
+          lockNote.className = 'glt-rules-locked-note';
+          lockNote.textContent = '🔒 ' + T.lobby.rulesLockedByRoom(this.pvpRoomId);
+          setupForm.appendChild(lockNote);
+        }
+
         // 3. Format & Mode Row
         var rowFmtMode = document.createElement('div');
         rowFmtMode.className = 'glt-row-options';
@@ -4347,7 +4375,8 @@
               self.platesSystem.setBoardSize((GLT.rules.BOARDS_MAP[val] || { size: 10 }).size);
             }
             self.autoPlacePlayerFleet('spread');
-          }
+          },
+          rulesLocked
         ));
 
         rowFmtMode.appendChild(makeSelectCol(
@@ -4358,7 +4387,8 @@
           function(val) {
             self.matchConfig.mode = val;
             self.updateTopHudStatus();
-          }
+          },
+          rulesLocked
         ));
         setupForm.appendChild(rowFmtMode);
 
@@ -4378,7 +4408,8 @@
             }
             self.updateTopHudStatus();
             self.updateSeaPreviewBox();
-          }
+          },
+          rulesLocked
         ));
 
         rowSeaSeries.appendChild(makeSelectCol(
@@ -4420,6 +4451,7 @@
           rChip.setAttribute('aria-pressed', active ? 'true' : 'false');
           rChip.textContent = T.rules[ruleKey].name;
           rChip.title = T.rules[ruleKey].desc;
+          rChip.disabled = rulesLocked;
           rChip.addEventListener('click', function() {
             self.matchConfig[ruleKey] = !self.matchConfig[ruleKey];
             if (ruleKey === 'allowTouch' && !self.matchConfig.allowTouch) {
@@ -4427,6 +4459,7 @@
             } else {
               self.renderGameplayTab();
             }
+            self.onMatchConfigChanged();
             if (self.audio) self.audio.playUiClick();
           });
           rulesGrid.appendChild(rChip);
@@ -4452,7 +4485,8 @@
                 ? T.turns.timerSeconds(self.matchConfig.turnTimer)
                 : T.rules.turnTimer.off;
             }
-          }
+          },
+          rulesLocked
         ));
         rulesGroup.appendChild(timerRow);
         setupForm.appendChild(rulesGroup);
@@ -4848,6 +4882,19 @@
       return gridWrapper;
     },
 
+    // The Online tab shows the Combate options before a room exists: keep it current.
+    onMatchConfigChanged: function() {
+      if (!this.pvpRoomId && this.dom && this.dom.tabPvp) this.renderPvpTab();
+    },
+
+    crewPortraitUrls: function(crewId, size) {
+      var fallbackUrl = (GLT.backdropFx && GLT.backdropFx.generateCaptainAvatarDataUrl)
+        ? GLT.backdropFx.generateCaptainAvatarDataUrl(crewId, size || 64)
+        : '';
+      var url = (GLT.assets && GLT.assets.portraits && GLT.assets.portraits[crewId]) || fallbackUrl;
+      return { url: url, fallback: fallbackUrl };
+    },
+
     renderPvpTab: function() {
       var self = this;
       var T = getT();
@@ -4855,6 +4902,11 @@
       var container = this.dom.tabPvp;
       if (!container) return;
       container.innerHTML = '';
+
+      // Entering or leaving a room locks or frees the rule controls of the Combate tab.
+      if (!!this.pvpRoomId !== !!this._rulesLockShown && this.gamePhase === 'SETUP' && this.dom.tabGameplay) {
+        this.renderGameplayTab();
+      }
 
       var pvpBox = document.createElement('div');
       pvpBox.className = 'glt-pvp-panel';
@@ -5391,11 +5443,9 @@
               cBtn.type = 'button';
               cBtn.className = 'glt-inroom-crew-btn' + (isSel ? ' selected' : '');
               cBtn.setAttribute('aria-pressed', isSel ? 'true' : 'false');
-              var portraitUrl = (GLT.backdropFx && GLT.backdropFx.generateCaptainAvatarDataUrl)
-                ? GLT.backdropFx.generateCaptainAvatarDataUrl(c.id, 48)
-                : '';
+              var portrait = self.crewPortraitUrls(c.id, 48);
               cBtn.innerHTML =
-                (portraitUrl ? '<img class="inroom-thumb" src="' + portraitUrl + '" alt="">' : '') +
+                (portrait.url ? '<img class="inroom-thumb" src="' + portrait.url + '" alt="" onerror="this.onerror=null;this.src=\'' + portrait.fallback + '\'">' : '') +
                 '<div class="inroom-meta">' +
                   '<strong>' + c.name + '</strong>' +
                   '<small>' + c.captain + '</small>' +
@@ -5410,6 +5460,8 @@
                 self.syncPlayerFleetTo3d();
                 self.updateRivalAvatar();
                 self.updateRivalTaunt('intro');
+                self.renderGameplayTab();
+                self.renderFleetTab();
                 self.renderPvpTab();
                 if (self.audio && typeof self.audio.playUiClick === 'function') self.audio.playUiClick();
               });

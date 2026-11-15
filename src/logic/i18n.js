@@ -85,9 +85,9 @@
     },
 
     series: {
-      md1: 'Melhor de 1 (Partida Única)',
-      md3: 'Melhor de 3 (Série Clássica)',
-      md5: 'Melhor de 5 (Disputa de Yonkou)',
+      md1: 'Partida Única',
+      md3: 'Melhor de 3',
+      md5: 'Melhor de 5',
       shortMd1: 'MD1',
       shortMd3: 'MD3',
       shortMd5: 'MD5',
@@ -833,6 +833,8 @@
       deleteRoomConfirm: (code) => `Excluir a sala ${code} e encerrar a partida? Toque de novo para confirmar`,
       clearRoomsConfirm: 'Remover as salas abertas? Toque de novo para confirmar',
       onlyHostDeletesRoom: 'Só quem criou a sala pode excluí-la.',
+      rulesLockedByRoom: (code) => `Regras travadas pela sala ${code}. Saia da sala para alterar.`,
+      crewLockedAfterCommit: 'Frota já comprometida: a tripulação não muda mais nesta partida.',
       roomDeletedToast: (code) => `Sala ${code} excluída.`,
       roomsClearedToast: 'Todas as salas abertas foram removidas.',
       artifactDbReadyBadge: 'Salas online ativas — jogadas salvas no armazenamento do artefato',

@@ -7,6 +7,18 @@ O formato baseia-se em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0
 
 ## [Não lançado]
 
+### Corrigido (rodada de testes em celular e computador)
+- **Assentos protegidos**: no Wi-Fi e no WebRTC, só o aparelho que ocupou um assento publica eventos por ele. O servidor Wi-Fi e o anfitrião WebRTC carimbam cada evento com o assento verdadeiro; um segundo aparelho que tenta entrar como jogador recebe "sala cheia".
+- **Técnicas no PvP**: as seis técnicas mostram a faixa, o resultado (Haki do Rei, Room, Observação) no diário e no leitor de tela, para os dois jogadores. A célula revelada por Observação aparece no radar. A técnica não é mais gasta numa célula padrão quando nenhuma foi escolhida, nem disparada com uma jogada ainda sem resposta; usa a tripulação comprometida, não a da aba Combate.
+- **Bênçãos**: abrir a bênção ganha na tela de vitória não apaga mais o cartaz e o botão de revanche. A janela abre por cima, fecha com Esc e devolve o foco. Cartões respondem a Enter e Espaço. Bênção bloqueada aparece como bloqueada; todas dizem que são relíquias de coleção.
+- **Den Den Mushi com o painel recolhido** abre as reações sobre o tabuleiro em vez de reabrir o painel.
+- **Sombra dos próprios navios nas águas inimigas** (convidado): a espuma da frota posicionada no lobby ficava na placa que vira o mar inimigo.
+- **Radar no celular**: o radar das águas inimigas cabe inteiro na tela, com FOGO e técnica acima dele. Escolha entre "Águas Inimigas" e "Ambas" (lembrada no aparelho).
+- **Contorno do seletor focado** não é mais cortado na borda direita do painel.
+- **Celular fechando o jogo**: as 64 ilustrações somavam 47 MB e eram decodificadas em tamanho cheio (um retrato de 1024 px para um ícone de 48 px). Agora são geradas no tamanho em que aparecem (5,7 MB). A perda do contexto 3D é tratada: a cena volta e uma partida online recarrega e retoma.
+- Céu de Marineford e mares sem imagem própria pediam um arquivo inexistente (404).
+- Código de sala digitado numa página sem acesso às salas online agora explica por quê.
+
 ### Adicionado
 - **Jogo publicado no GitHub Pages** (`.github/workflows/pages.yml`), sem servidor e sem instalação.
 - **PvP entre aparelhos em qualquer rede, por WebRTC** (`PeerTransport` em `src/net/transport.js`): o aparelho que cria a sala é o centro dela, guarda o log e retransmite os eventos; o convidado entra pelo link, QR Code ou código. Anfitrião e convidado podem recarregar a página e voltar para a partida. Escolhido automaticamente em páginas https sem servidor do jogo; o Wi-Fi local e o Artifact continuam como antes.
@@ -22,6 +34,7 @@ O formato baseia-se em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0
 - Publicações no servidor Wi-Fi são repetidas em caso de falha e avisam na tela se não chegarem.
 
 ### Testes
+- `tests/lan-server-test.js` e `tests/peer-transport-test.js`: assentos (evento sem prova, assento alheio, segundo jogador, carimbo vindo do remetente).
 - `tests/peer-transport-test.js`: regras do transporte WebRTC com um broker em memória.
 - `tests/lan-server-test.js`: regras do servidor Wi-Fi sem navegador.
 - `tests/lan-real-path-verify.js`: dois aparelhos pelo IP da rede, link do QR Code e cliques reais, com hosts externos bloqueados; roda no CI em job próprio.

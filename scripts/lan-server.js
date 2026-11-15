@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { exec } = require('child_process');
+const { actingSeat } = require('../src/logic/protocol.js');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const ARTIFACT_FILE = fs.existsSync(path.join(ROOT_DIR, 'grand-line-tactics.html'))
@@ -106,6 +107,10 @@ function createLanServer() {
   const sseSubscribers = new Map();
   // roomId -> secret chosen by the device that opened the room; only it may close the room
   const roomOwners = new Map();
+  // room key -> [secret of seat 0, secret of seat 1]: each seat belongs to the device whose
+  // ROOM_CREATED / ROOM_JOINED took it, and only that device may publish events for it
+  const roomSeats = new Map();
+  let lastRefusal = '';
   // roomId -> last time anything (presence included) arrived for that room
   const roomLastSeen = new Map();
   // roomIds currently hidden from the open list because their host went quiet
@@ -164,7 +169,34 @@ function createLanServer() {
     }
   }
 
-  function appendRoomEvent(key, event) {
+  /**
+   * Seat check for a match event. The seat an event speaks for is read from its own fields
+   * (protocol actingSeat); the device proves it holds that seat with the secret it sent when
+   * it took it. Accepted events are stamped `_seat`, which the protocol fold trusts over the
+   * body. Returns '' when accepted, otherwise the reason for the refusal.
+   */
+  function claimSeat(key, event, seatToken) {
+    delete event._seat; // never taken from the sender
+    if (event.type === 'ROOM_JOINED' && event.role === 'spectator') return '';
+    const seat = actingSeat(event);
+    if (seat !== 0 && seat !== 1) return 'no_seat';
+    const token = typeof seatToken === 'string' ? seatToken.slice(0, 64) : '';
+    if (!token) return 'no_token';
+    const seats = roomSeats.get(key) || [null, null];
+    if (!seats[seat]) {
+      const takesSeat = (seat === 0 && event.type === 'ROOM_CREATED') || (seat === 1 && event.type === 'ROOM_JOINED');
+      if (!takesSeat) return 'seat_unclaimed';
+      seats[seat] = token;
+      roomSeats.set(key, seats);
+    } else if (seats[seat] !== token) {
+      return event.type === 'ROOM_JOINED' ? 'seat_taken' : 'wrong_seat';
+    }
+    event._seat = seat;
+    return '';
+  }
+
+  function appendRoomEvent(key, event, seatToken) {
+    lastRefusal = '';
     if (!key || !event || typeof event !== 'object') return false;
 
     if (key === 'glt_open_rooms') {
@@ -182,6 +214,7 @@ function createLanServer() {
         if (!ownerAllows(cleanId, event.ownerToken)) return false;
         forgetRoom(cleanId);
         roomLogs.delete(cleanId);
+        roomSeats.delete(cleanId);
         roomOwners.delete(cleanId);
         roomLastSeen.delete(cleanId);
         broadcastSse('glt_open_rooms', { type: 'ROOM_DELETED', id: cleanId, _transportMsgId: event._transportMsgId || ('del_' + Date.now()) });
@@ -221,6 +254,9 @@ function createLanServer() {
       return false;
     }
 
+    lastRefusal = claimSeat(key, event, seatToken);
+    if (lastRefusal) return false;
+
     touchRoom(String(key).toUpperCase());
 
     // Presence is live-only: storing it would push ROOM_CREATED / READY_COMMIT out of the capped log.
@@ -233,6 +269,7 @@ function createLanServer() {
       if (roomLogs.size >= MAX_ROOMS) {
         const oldestKey = roomLogs.keys().next().value;
         roomLogs.delete(oldestKey);
+        roomSeats.delete(oldestKey);
         roomOwners.delete(oldestKey);
         roomLastSeen.delete(oldestKey);
         forgetRoom(oldestKey);
@@ -408,9 +445,9 @@ function createLanServer() {
         if (aborted) return;
         try {
           const parsed = JSON.parse(body || '{}');
-          const ok = appendRoomEvent(String(parsed.key || '').trim(), parsed.event);
+          const ok = appendRoomEvent(String(parsed.key || '').trim(), parsed.event, parsed.seatToken);
           res.writeHead(ok ? 200 : 403, { 'Content-Type': 'application/json; charset=utf-8' });
-          res.end(JSON.stringify(ok ? { ok } : { ok, error: 'Refused' }));
+          res.end(JSON.stringify(ok ? { ok } : { ok, error: 'Refused', reason: lastRefusal || 'refused' }));
         } catch (_) {
           res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({ ok: false, error: 'Invalid JSON' }));

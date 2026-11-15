@@ -1089,6 +1089,7 @@
           turn: state.turnNumber,
           shooterIndex: shooterIdx,
           techId: state.pendingTech.techId,
+          params: state.pendingTech.params,
           result: ev.result
         });
 

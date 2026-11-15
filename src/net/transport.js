@@ -51,6 +51,18 @@
   }
 
   /**
+   * The seat (0 | 1 | null) an event speaks for, as the protocol reads it. `undefined` when
+   * the protocol module is not loaded (then nothing is stamped or refused here).
+   */
+  function seatOfEvent(ev) {
+    let proto = root.GLT && root.GLT.protocol;
+    if (!proto && typeof module !== 'undefined' && module.exports && typeof require === 'function') {
+      try { proto = require('../logic/protocol.js'); } catch (_) { proto = null; }
+    }
+    return proto && typeof proto.actingSeat === 'function' ? proto.actingSeat(ev) : undefined;
+  }
+
+  /**
    * Base Transport Interface
    */
   class Transport {
@@ -574,6 +586,8 @@
       this.destroyed = false;
       // roomId -> secret that proves this device opened the room (LAN relay only closes a room for it)
       this.roomTokens = this._loadRoomTokens();
+      // secret of this tab: the relay ties the seat this tab takes in a room to it
+      this.seatToken = this._loadSeatToken();
 
       if (this.backend === 'lanRelay' && typeof window !== 'undefined' && window.__GLT_LAN_CONFIG__) {
         const initRooms = window.__GLT_LAN_CONFIG__.initialRooms;
@@ -644,6 +658,20 @@
         });
       } catch (_) {}
       return tokens;
+    }
+
+    _loadSeatToken() {
+      let token = '';
+      try {
+        if (typeof sessionStorage !== 'undefined') token = sessionStorage.getItem('glt_seat_token') || '';
+      } catch (_) {}
+      if (!token) {
+        token = getRandomHex(16);
+        try {
+          if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('glt_seat_token', token);
+        } catch (_) {}
+      }
+      return token;
     }
 
     _saveRoomTokens() {
@@ -756,14 +784,19 @@
         req = fetch('/api/glt-lan/publish', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key, event })
+          body: JSON.stringify(key === 'glt_open_rooms' ? { key, event } : { key, event, seatToken: this.seatToken })
         });
       } catch (_) { retry(); return; }
       Promise.resolve(req).then(res => {
         if (res && res.ok) {
           if (attempt > 1) this._lanStatus('ok', { key });
         } else if (res && res.status >= 400 && res.status < 500) {
-          giveUp(); // the relay refused this payload: the same body cannot succeed later
+          // The relay refused this payload: the same body cannot succeed later.
+          const refused = (res.status === 403 && typeof res.json === 'function') ? res.json() : Promise.resolve(null);
+          Promise.resolve(refused).then(info => {
+            if (info && info.reason === 'seat_taken') this._lanStatus('seat_taken', { key });
+            else giveUp();
+          }, giveUp);
         } else {
           retry();
         }
@@ -835,6 +868,12 @@
       if (this.backend === 'lanRelay') {
         if (key === 'glt_open_rooms' && cloned.type === 'ROOM_DELETED' && !this.ownsRoom(cloned.id)) {
           return false; // the relay would refuse it: only the device that opened a room closes it
+        }
+        if (key !== 'glt_open_rooms') {
+          // Same stamp the relay puts on the stored copy, so both copies fold identically.
+          delete cloned._seat;
+          const seat = seatOfEvent(cloned);
+          if (seat === 0 || seat === 1) cloned._seat = seat;
         }
         this._updateLanCacheWithEvent(key, cloned);
         this._dispatch(key, cloned);
@@ -2031,12 +2070,17 @@
   // - A guest connects to that id, receives the whole log, then exchanges single events.
   // - The broker only introduces the two browsers; game events travel on the WebRTC data
   //   channel. There is no room directory: a room is reached by its code, link or QR Code.
-  // - Like the Wi-Fi relay, this path cannot authenticate who speaks for which seat.
+  // - Seats: the host is seat 0. Seat 1 belongs to the first device whose ROOM_JOINED the
+  //   host accepts; that device proves itself with a secret it keeps for the tab (so it can
+  //   refresh). The host drops any event that speaks for a seat its sender does not hold
+  //   and stamps the rest with `_seat`.
 
   const PEER_LIB_URL = 'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js';
   const PEER_LIB_SRI = 'sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR';
   const PEER_ID_PREFIX = 'glt-tactics-room-';
   const PEER_HOST_LOG_PREFIX = 'glt_peer_host_';
+  const PEER_GUEST_KEY_PREFIX = 'glt_peer_guest_'; // host: secret of the device holding seat 1
+  const PEER_SEAT_KEY_PREFIX = 'glt_peer_seat_'; // guest: its own secret for a room
 
   let peerLibPromise = null;
 
@@ -2123,7 +2167,44 @@
       if (!this.storage || room.role !== 'host') return;
       try {
         this.storage.setItem(PEER_HOST_LOG_PREFIX + room.key, JSON.stringify(room.log));
+        if (room.guestKey) this.storage.setItem(PEER_GUEST_KEY_PREFIX + room.key, room.guestKey);
       } catch (_) {}
+    }
+
+    _stored(name) {
+      if (!this.storage) return '';
+      try { return this.storage.getItem(name) || ''; } catch (_) { return ''; }
+    }
+
+    /** The secret this page shows the host of `key` (kept for the tab, so a refresh keeps the seat). */
+    _mySeatKey(key) {
+      let secret = this._stored(PEER_SEAT_KEY_PREFIX + key);
+      if (!secret) {
+        secret = getRandomHex(16);
+        try { if (this.storage) this.storage.setItem(PEER_SEAT_KEY_PREFIX + key, secret); } catch (_) {}
+      }
+      return secret;
+    }
+
+    /**
+     * Host: decides whether an event from a guest channel may enter the room. Returns the seat
+     * to stamp (1), null for a spectator joining, or false to drop the event.
+     */
+    _admitGuestEvent(room, conn, ev) {
+      delete ev._seat; // never taken from the sender
+      if (ev.type === 'ROOM_JOINED' && ev.role === 'spectator') return null;
+      const seat = seatOfEvent(ev);
+      if (seat === undefined) return null; // protocol not loaded: nothing to check against
+      if (seat !== 1 || !conn.seatKey) return false;
+      if (!room.guestKey) {
+        if (ev.type !== 'ROOM_JOINED') return false;
+        room.guestKey = conn.seatKey;
+        this._persist(room);
+      } else if (room.guestKey !== conn.seatKey) {
+        if (ev.type === 'ROOM_JOINED') this._send(conn, { t: 'refused', reason: 'seat_taken' });
+        return false;
+      }
+      return 1;
     }
 
     isHostOf(key) {
@@ -2158,6 +2239,8 @@
         releaseTimer: null,
         liveTimer: null,
         lastHeard: 0,
+        guestKey: role === 'host' ? this._stored(PEER_GUEST_KEY_PREFIX + key) : '',
+        mySeatKey: role === 'guest' ? this._mySeatKey(key) : '',
         synced: null,
         resolveSynced: null
       };
@@ -2251,8 +2334,16 @@
         this._send(conn, { t: 'sync', events: room.log });
       });
       conn.on('data', msg => {
-        if (room.closed || !msg || msg.t !== 'ev' || !msg.event) return;
+        if (room.closed || !msg) return;
+        if (msg.t === 'hello') {
+          if (typeof msg.key === 'string' && msg.key) conn.seatKey = msg.key.slice(0, 64);
+          return;
+        }
+        if (msg.t !== 'ev' || !msg.event || typeof msg.event !== 'object') return;
         const ev = msg.event;
+        const seat = this._admitGuestEvent(room, conn, ev);
+        if (seat === false) return;
+        if (seat === 1) ev._seat = 1;
         if (!this._append(room, ev)) return;
         this._emit(room.key, ev);
         room.conns.forEach(other => {
@@ -2350,6 +2441,7 @@
       }
       room.conn = conn;
       room.lastHeard = Date.now();
+      conn.on('open', () => this._send(conn, { t: 'hello', key: room.mySeatKey }));
       conn.on('data', msg => {
         if (room.conn !== conn) return; // a channel already given up on
         room.lastHeard = Date.now();
@@ -2368,6 +2460,14 @@
 
     _onGuestData(room, conn, msg) {
       if (room.closed || !msg) return;
+      if (msg.t === 'refused') {
+        // Seat 1 already belongs to another device.
+        const takenKey = room.key;
+        if (room.resolveSynced) this._failJoin(room);
+        else this.close(takenKey, false);
+        this._status('seat_taken', { key: takenKey });
+        return;
+      }
       if (msg.t === 'closed') {
         // The host closed the room for everyone.
         const key = room.key;
@@ -2409,6 +2509,13 @@
         room = (ev.type === 'ROOM_CREATED') ? this.host(key, []) : this.ensure(key);
       }
       if (room.closed) return false;
+      // This page speaks only for its own seat: 0 as host, 1 as guest.
+      delete ev._seat;
+      const seat = seatOfEvent(ev);
+      if (seat === 0 || seat === 1) {
+        if (seat !== (room.role === 'host' ? 0 : 1)) return false;
+        ev._seat = seat;
+      }
       const fresh = this._append(room, ev);
       if (!fresh) return true;
       this._emit(key, ev);
@@ -2442,7 +2549,10 @@
 
     forget(key) {
       if (!this.storage) return;
-      try { this.storage.removeItem(PEER_HOST_LOG_PREFIX + key); } catch (_) {}
+      try {
+        this.storage.removeItem(PEER_HOST_LOG_PREFIX + key);
+        this.storage.removeItem(PEER_GUEST_KEY_PREFIX + key);
+      } catch (_) {}
     }
 
     /** Called when a transport stops listening: a room nobody on this page listens to is left. */

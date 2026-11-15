@@ -2022,7 +2022,580 @@
   }
 
   // =========================================================================
-  // 5. Backend detection (automatic): LAN relay > published Artifact db > BroadcastChannel
+  // 4B. PeerTransport: WebRTC between devices, for the game served as a static page
+  //     (GitHub Pages). No game server: the device that opens a room is its hub.
+  // =========================================================================
+  //
+  // - The host registers on the public PeerJS broker under an id derived from the room
+  //   code, keeps the room log and relays every event to the connected devices.
+  // - A guest connects to that id, receives the whole log, then exchanges single events.
+  // - The broker only introduces the two browsers; game events travel on the WebRTC data
+  //   channel. There is no room directory: a room is reached by its code, link or QR Code.
+  // - Like the Wi-Fi relay, this path cannot authenticate who speaks for which seat.
+
+  const PEER_LIB_URL = 'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js';
+  const PEER_LIB_SRI = 'sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR';
+  const PEER_ID_PREFIX = 'glt-tactics-room-';
+  const PEER_HOST_LOG_PREFIX = 'glt_peer_host_';
+
+  let peerLibPromise = null;
+
+  /** Loads PeerJS on demand (pinned version, integrity-checked). Resolves the Peer constructor. */
+  function loadPeerLibrary(win) {
+    const w = win || (typeof window !== 'undefined' ? window : undefined);
+    if (!w || !w.document) return Promise.reject(new Error('peer_lib_no_document'));
+    if (w.Peer) return Promise.resolve(w.Peer);
+    if (peerLibPromise) return peerLibPromise;
+    peerLibPromise = new Promise((resolve, reject) => {
+      const s = w.document.createElement('script');
+      s.src = PEER_LIB_URL;
+      s.integrity = PEER_LIB_SRI;
+      s.crossOrigin = 'anonymous';
+      s.async = true;
+      s.onload = () => (w.Peer ? resolve(w.Peer) : reject(new Error('peer_lib_missing')));
+      s.onerror = () => reject(new Error('peer_lib_load_failed'));
+      w.document.head.appendChild(s);
+    }).catch(err => {
+      peerLibPromise = null; // a later attempt may find the network back
+      throw err;
+    });
+    return peerLibPromise;
+  }
+
+  function eventIdOf(ev) {
+    return ev ? (ev.eventId || ev._transportMsgId || null) : null;
+  }
+
+  function defaultPeerStorage() {
+    try {
+      if (typeof sessionStorage !== 'undefined') return sessionStorage;
+    } catch (_) {}
+    return null;
+  }
+
+  /**
+   * One per page: owns the broker registrations and the data channels, shared by every
+   * PeerTransport instance (the lobby keeps one, each room gets another).
+   */
+  class PeerHub {
+    constructor(options = {}) {
+      this.loadPeer = typeof options.loadPeer === 'function' ? options.loadPeer : () => loadPeerLibrary();
+      this.peerOptions = options.peerOptions;
+      this.storage = options.storage !== undefined ? options.storage : defaultPeerStorage();
+      this.joinTimeoutMs = options.joinTimeoutMs !== undefined ? options.joinTimeoutMs : 20000;
+      this.retryMs = options.retryMs !== undefined ? options.retryMs : 2000;
+      this.maxIdRetries = options.maxIdRetries !== undefined ? options.maxIdRetries : 6;
+      this.releaseDelayMs = options.releaseDelayMs !== undefined ? options.releaseDelayMs : 800;
+      // A browser does not always report a channel whose other end vanished (refresh, closed
+      // tab, lost signal): the host pings, and a guest that hears nothing for a while reconnects.
+      this.pingMs = options.pingMs !== undefined ? options.pingMs : 4000;
+      this.silenceMs = options.silenceMs !== undefined ? options.silenceMs : 12000;
+      this.rooms = new Map(); // key -> room
+      this.transports = new Set();
+      this.lastErrorAt = 0;
+    }
+
+    _emit(key, ev) {
+      this.transports.forEach(t => t._dispatch(key, ev));
+    }
+
+    _status(kind, detail) {
+      if (kind === 'error') {
+        const now = Date.now();
+        if (now - this.lastErrorAt < 10000) return; // one warning, not one per retry
+        this.lastErrorAt = now;
+      }
+      this.transports.forEach(t => t._status(kind, detail));
+    }
+
+    storedHostLog(key) {
+      if (!this.storage) return null;
+      try {
+        const raw = this.storage.getItem(PEER_HOST_LOG_PREFIX + key);
+        const list = raw ? JSON.parse(raw) : null;
+        return Array.isArray(list) ? list : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    _persist(room) {
+      if (!this.storage || room.role !== 'host') return;
+      try {
+        this.storage.setItem(PEER_HOST_LOG_PREFIX + room.key, JSON.stringify(room.log));
+      } catch (_) {}
+    }
+
+    isHostOf(key) {
+      const room = this.rooms.get(key);
+      if (room) return room.role === 'host';
+      return this.storedHostLog(key) !== null;
+    }
+
+    /** Appends to the room log. False when the event was already there. */
+    _append(room, ev) {
+      if (!ev || ev.type === 'HEARTBEAT') return true; // presence is relayed, never stored
+      const id = eventIdOf(ev);
+      if (id && room.ids.has(id)) return false;
+      if (id) room.ids.add(id);
+      room.log.push(clone(ev));
+      this._persist(room);
+      return true;
+    }
+
+    _newRoom(key, role, log) {
+      const room = {
+        key,
+        role,
+        log: [],
+        ids: new Set(),
+        peer: null,
+        conns: new Set(), // host: open data channels
+        conn: null, // guest: channel to the host
+        closed: false,
+        idRetries: 0,
+        retryTimer: null,
+        releaseTimer: null,
+        liveTimer: null,
+        lastHeard: 0,
+        synced: null,
+        resolveSynced: null
+      };
+      (log || []).forEach(ev => {
+        const id = eventIdOf(ev);
+        if (id) room.ids.add(id);
+        room.log.push(clone(ev));
+      });
+      this.rooms.set(key, room);
+      return room;
+    }
+
+    /** The room this page takes part in: as host when it opened the room, as guest otherwise. */
+    ensure(key) {
+      const existing = this.rooms.get(key);
+      if (existing) {
+        if (existing.releaseTimer) {
+          clearTimeout(existing.releaseTimer);
+          existing.releaseTimer = null;
+        }
+        return existing;
+      }
+      const stored = this.storedHostLog(key);
+      return stored ? this.host(key, stored) : this.guest(key);
+    }
+
+    _send(conn, msg) {
+      try {
+        if (conn && conn.open) {
+          conn.send(msg);
+          return true;
+        }
+      } catch (_) {}
+      return false;
+    }
+
+    // ---- host side ----
+
+    host(key, log) {
+      const room = this._newRoom(key, 'host', log);
+      room.synced = Promise.resolve(clone(room.log));
+      this._persist(room);
+      this._openHostPeer(room);
+      room.liveTimer = setInterval(() => {
+        room.conns.forEach(conn => this._send(conn, { t: 'ping' }));
+      }, this.pingMs);
+      return room;
+    }
+
+    _openHostPeer(room) {
+      this.loadPeer().then(Peer => {
+        if (room.closed) return;
+        const peer = new Peer(PEER_ID_PREFIX + room.key, this.peerOptions);
+        room.peer = peer;
+        peer.on('open', () => {
+          room.idRetries = 0;
+          this._status('online', { key: room.key });
+        });
+        peer.on('connection', conn => this._acceptGuest(room, conn));
+        peer.on('disconnected', () => {
+          if (!room.closed && !peer.destroyed) {
+            try { peer.reconnect(); } catch (_) {}
+          }
+        });
+        peer.on('error', err => {
+          if (room.closed) return;
+          const type = err && err.type;
+          if (type === 'unavailable-id') {
+            // After a refresh the broker may still hold the id of the tab that just went away.
+            try { peer.destroy(); } catch (_) {}
+            room.peer = null;
+            if (room.idRetries < this.maxIdRetries) {
+              room.idRetries++;
+              room.retryTimer = setTimeout(() => this._openHostPeer(room), this.retryMs);
+            } else {
+              this._status('error', { key: room.key, reason: 'room_code_taken' });
+            }
+            return;
+          }
+          this._status('error', { key: room.key, reason: type || 'peer_error' });
+        });
+      }).catch(() => {
+        if (!room.closed) this._status('error', { key: room.key, reason: 'peer_lib_load_failed' });
+      });
+    }
+
+    _acceptGuest(room, conn) {
+      conn.on('open', () => {
+        if (room.closed) return;
+        room.conns.add(conn);
+        this._send(conn, { t: 'sync', events: room.log });
+      });
+      conn.on('data', msg => {
+        if (room.closed || !msg || msg.t !== 'ev' || !msg.event) return;
+        const ev = msg.event;
+        if (!this._append(room, ev)) return;
+        this._emit(room.key, ev);
+        room.conns.forEach(other => {
+          if (other !== conn) this._send(other, { t: 'ev', event: ev });
+        });
+      });
+      const drop = () => room.conns.delete(conn);
+      conn.on('close', drop);
+      conn.on('error', drop);
+    }
+
+    // ---- guest side ----
+
+    guest(key) {
+      const room = this._newRoom(key, 'guest', []);
+      room.synced = new Promise(resolve => { room.resolveSynced = resolve; });
+      const giveUp = setTimeout(() => this._failJoin(room), this.joinTimeoutMs);
+      room.synced.then(() => clearTimeout(giveUp));
+      room.liveTimer = setInterval(() => {
+        if (room.resolveSynced) return; // the first join has its own time limit
+        const conn = room.conn;
+        if (conn && Date.now() - room.lastHeard < this.silenceMs) return;
+        if (!conn && room.retryTimer) return;
+        // The host went quiet without the channel saying so, or an attempt never opened nor
+        // failed: drop it and look for the host again.
+        room.conn = null;
+        if (conn) {
+          const wasOpen = !!conn.open;
+          try { conn.close(); } catch (_) {}
+          if (wasOpen) this._status('reconnecting', { key: room.key });
+        }
+        this._scheduleReconnect(room);
+      }, Math.max(20, Math.floor(this.silenceMs / 3)));
+
+      this.loadPeer().then(Peer => {
+        if (room.closed) return;
+        const peer = new Peer(undefined, this.peerOptions);
+        room.peer = peer;
+        peer.on('open', () => this._connectToHost(room));
+        peer.on('disconnected', () => {
+          if (!room.closed && !peer.destroyed) {
+            try { peer.reconnect(); } catch (_) {}
+          }
+        });
+        peer.on('error', err => {
+          if (room.closed) return;
+          const type = err && err.type;
+          if (type === 'peer-unavailable') {
+            // Nobody holds this room code. On the first try the room does not exist; later
+            // it means the host is away (refresh, closed tab): keep trying.
+            if (room.resolveSynced) this._failJoin(room);
+            else this._scheduleReconnect(room);
+            return;
+          }
+          if (room.resolveSynced) this._failJoin(room);
+          else this._status('error', { key: room.key, reason: type || 'peer_error' });
+        });
+      }).catch(() => {
+        if (room.closed) return;
+        this._status('error', { key: room.key, reason: 'peer_lib_load_failed' });
+        this._failJoin(room);
+      });
+      return room;
+    }
+
+    _failJoin(room) {
+      if (!room.resolveSynced) return;
+      const resolve = room.resolveSynced;
+      room.resolveSynced = null;
+      this.close(room.key, false);
+      resolve([]);
+    }
+
+    _scheduleReconnect(room) {
+      if (room.closed || room.retryTimer) return;
+      room.retryTimer = setTimeout(() => {
+        room.retryTimer = null;
+        if (!room.closed) this._connectToHost(room);
+      }, this.retryMs);
+    }
+
+    _connectToHost(room) {
+      if (room.closed || !room.peer || room.peer.destroyed) return;
+      if (room.conn && room.conn.open) return;
+      let conn;
+      try {
+        conn = room.peer.connect(PEER_ID_PREFIX + room.key, { reliable: true, serialization: 'json' });
+      } catch (_) {
+        this._scheduleReconnect(room);
+        return;
+      }
+      if (!conn) {
+        this._scheduleReconnect(room);
+        return;
+      }
+      room.conn = conn;
+      room.lastHeard = Date.now();
+      conn.on('data', msg => {
+        if (room.conn !== conn) return; // a channel already given up on
+        room.lastHeard = Date.now();
+        this._onGuestData(room, conn, msg);
+      });
+      const lost = () => {
+        if (room.conn !== conn) return;
+        room.conn = null;
+        if (room.closed) return;
+        if (!room.resolveSynced) this._status('reconnecting', { key: room.key });
+        this._scheduleReconnect(room);
+      };
+      conn.on('close', lost);
+      conn.on('error', lost);
+    }
+
+    _onGuestData(room, conn, msg) {
+      if (room.closed || !msg) return;
+      if (msg.t === 'closed') {
+        // The host closed the room for everyone.
+        const key = room.key;
+        this.close(key, false);
+        this._emit(LOBBY_KEY, { type: 'ROOM_DELETED', id: key });
+        return;
+      }
+      if (msg.t === 'sync' && Array.isArray(msg.events)) {
+        const hostIds = new Set();
+        msg.events.forEach(ev => {
+          const id = eventIdOf(ev);
+          if (id) hostIds.add(id);
+          if (this._append(room, ev)) this._emit(room.key, ev);
+        });
+        // Anything published while the host was away goes up now.
+        room.log.forEach(ev => {
+          const id = eventIdOf(ev);
+          if (id && !hostIds.has(id)) this._send(conn, { t: 'ev', event: ev });
+        });
+        if (room.resolveSynced) {
+          const resolve = room.resolveSynced;
+          room.resolveSynced = null;
+          resolve(clone(room.log));
+        } else {
+          this._status('online', { key: room.key });
+        }
+        return;
+      }
+      if (msg.t === 'ev' && msg.event) {
+        if (this._append(room, msg.event)) this._emit(room.key, msg.event);
+      }
+    }
+
+    // ---- both sides ----
+
+    publish(key, ev) {
+      let room = this.rooms.get(key);
+      if (!room) {
+        room = (ev.type === 'ROOM_CREATED') ? this.host(key, []) : this.ensure(key);
+      }
+      if (room.closed) return false;
+      const fresh = this._append(room, ev);
+      if (!fresh) return true;
+      this._emit(key, ev);
+      if (room.role === 'host') {
+        room.conns.forEach(conn => this._send(conn, { t: 'ev', event: ev }));
+      } else {
+        // Not connected right now? Stored events go up with the next sync; presence is just dropped.
+        this._send(room.conn, { t: 'ev', event: ev });
+      }
+      return true;
+    }
+
+    /** Ends this page's part in the room. `forEveryone` (host only) tells the guests it is over. */
+    close(key, forEveryone) {
+      const room = this.rooms.get(key);
+      if (!room) return;
+      room.closed = true;
+      this.rooms.delete(key);
+      if (room.retryTimer) clearTimeout(room.retryTimer);
+      if (room.releaseTimer) clearTimeout(room.releaseTimer);
+      if (room.liveTimer) clearInterval(room.liveTimer);
+      if (forEveryone && room.role === 'host') {
+        room.conns.forEach(conn => this._send(conn, { t: 'closed' }));
+      }
+      const peer = room.peer;
+      if (peer) {
+        // Let the last messages leave before the channels go down.
+        setTimeout(() => { try { peer.destroy(); } catch (_) {} }, forEveryone ? 400 : 0);
+      }
+    }
+
+    forget(key) {
+      if (!this.storage) return;
+      try { this.storage.removeItem(PEER_HOST_LOG_PREFIX + key); } catch (_) {}
+    }
+
+    /** Called when a transport stops listening: a room nobody on this page listens to is left. */
+    releaseIfUnused(key) {
+      const room = this.rooms.get(key);
+      if (!room || room.releaseTimer) return;
+      room.releaseTimer = setTimeout(() => {
+        room.releaseTimer = null;
+        let used = false;
+        this.transports.forEach(t => {
+          const subs = t.subscribers.get(key);
+          if (subs && subs.size > 0) used = true;
+        });
+        if (!used) this.close(key, false);
+      }, this.releaseDelayMs);
+    }
+  }
+
+  let defaultPeerHub = null;
+
+  class PeerTransport extends Transport {
+    constructor(options = {}) {
+      super();
+      this.clientId = options.clientId || ('peer_' + getRandomHex(4));
+      if (options.hub) {
+        this.hub = options.hub;
+      } else {
+        if (!defaultPeerHub) {
+          const cfg = (typeof window !== 'undefined' && window.__GLT_PEER_CONFIG__) || undefined;
+          defaultPeerHub = new PeerHub({ peerOptions: cfg });
+        }
+        this.hub = defaultPeerHub;
+      }
+      this.subscribers = new Map(); // key -> Set<handler>
+      this.onStatus = typeof options.onStatus === 'function' ? options.onStatus : null;
+      this.destroyed = false;
+      this.hub.transports.add(this);
+    }
+
+    isAvailable() {
+      return true;
+    }
+
+    getBackendType() {
+      return 'peer';
+    }
+
+    getLatencyMs() {
+      return 80;
+    }
+
+    _status(kind, detail) {
+      if (this.onStatus) {
+        try { this.onStatus(kind, detail); } catch (_) {}
+      }
+    }
+
+    _dispatch(key, event) {
+      const subs = this.subscribers.get(key);
+      if (!subs) return;
+      subs.forEach(handler => {
+        try { handler(clone(event)); } catch (err) {
+          console.error('[PeerTransport] Handler error:', err);
+        }
+      });
+    }
+
+    publish(key, event) {
+      if (this.destroyed || !key || !event) return false;
+      if (key === LOBBY_KEY) return true; // no room directory on this path: rooms are reached by code
+      const cloned = clone(event);
+      if (!cloned._transportMsgId) {
+        cloned._transportMsgId = (cloned.eventId || 'm') + '_' + Date.now() + '_' + getRandomHex(3);
+      }
+      return this.hub.publish(key, cloned);
+    }
+
+    subscribe(key, handler) {
+      if (!key || typeof handler !== 'function') {
+        throw new Error('Transport.subscribe requires a key and handler function');
+      }
+      if (!this.subscribers.has(key)) this.subscribers.set(key, new Set());
+      const subs = this.subscribers.get(key);
+      subs.add(handler);
+      if (key !== LOBBY_KEY) this.hub.ensure(key);
+      return () => {
+        subs.delete(handler);
+        if (key !== LOBBY_KEY) this.hub.releaseIfUnused(key);
+      };
+    }
+
+    read(key) {
+      if (key === LOBBY_KEY) return [];
+      const room = this.hub.rooms.get(key);
+      if (room) return clone(room.log);
+      return this.hub.storedHostLog(key) || [];
+    }
+
+    /** Resolves the room log once the host answered; an empty log means the room is not there. */
+    readAsync(key) {
+      if (!key || key === LOBBY_KEY) return Promise.resolve([]);
+      const room = this.hub.ensure(key);
+      return room.synced.then(() => this.read(key));
+    }
+
+    ownsRoom(roomId) {
+      return this.hub.isHostOf(roomId);
+    }
+
+    deleteRoom(roomId) {
+      if (!roomId || !this.hub.isHostOf(roomId)) return false;
+      this.hub.close(roomId, true);
+      this.hub.forget(roomId);
+      return true;
+    }
+
+    clearOpenRooms() {
+      return false;
+    }
+
+    heartbeat(key, payload = {}) {
+      const hb = {
+        type: 'HEARTBEAT',
+        playerId: payload.playerId || this.clientId,
+        status: payload.status || 'online',
+        timestamp: Date.now(),
+        ...clone(payload)
+      };
+      return this.publish(key, hb);
+    }
+
+    destroy() {
+      this.destroyed = true;
+      const keys = Array.from(this.subscribers.keys());
+      this.subscribers.clear();
+      this.hub.transports.delete(this);
+      keys.forEach(key => {
+        if (key !== LOBBY_KEY) this.hub.releaseIfUnused(key);
+      });
+    }
+  }
+
+  /** WebRTC is the choice when the page is served over https with no game server behind it. */
+  function shouldUsePeer(w) {
+    if (!w || typeof w.RTCPeerConnection === 'undefined') return false;
+    if (w.__GLT_NET__ === 'peer') return true;
+    if (w.__GLT_NET__ === 'tabs') return false;
+    return !!(w.location && w.location.protocol === 'https:');
+  }
+
+  // =========================================================================
+  // 5. Backend detection (automatic): LAN relay > published Artifact db > WebRTC (https
+  //    static page) > BroadcastChannel
   // =========================================================================
 
   let capsMemo = null;
@@ -2059,7 +2632,7 @@
   }
 
   /**
-   * @returns {Promise<{kind: 'lanRelay'|'artifactDb'|'broadcastChannel'|'none', caps?: object, reason?: string}>}
+   * @returns {Promise<{kind: 'lanRelay'|'artifactDb'|'peer'|'broadcastChannel'|'none', caps?: object, reason?: string}>}
    */
   function detectTransportBackend(win) {
     const w = win || (typeof window !== 'undefined' ? window : undefined);
@@ -2073,6 +2646,7 @@
         if (!caps.userId) return { kind: 'none', caps, reason: 'identity_unavailable' };
         return { kind: 'artifactDb', caps };
       }
+      if (shouldUsePeer(w)) return { kind: 'peer' };
       if (w && typeof w.BroadcastChannel !== 'undefined') return { kind: 'broadcastChannel' };
       return { kind: 'none', reason: 'no_transport' };
     }, () => ({ kind: 'none', reason: 'db_unavailable' }));
@@ -2088,6 +2662,7 @@
         userId: backend.caps.userId
       }));
     }
+    if (backend.kind === 'peer') return new PeerTransport(options);
     return new ArtifactSharedTransport(options);
   }
 
@@ -2103,6 +2678,9 @@
     SimulatedNetworkHub,
     ArtifactSharedTransport,
     ArtifactDbTransport,
+    PeerTransport,
+    PeerHub,
+    PEER_ID_PREFIX,
     ARTIFACT_CAPABILITIES,
     resolveArtifactCapabilities,
     detectTransportBackend,

@@ -7,6 +7,10 @@ O formato baseia-se em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0
 
 ## [Não lançado]
 
+### Adicionado
+- **Jogo publicado no GitHub Pages** (`.github/workflows/pages.yml`), sem servidor e sem instalação.
+- **PvP entre aparelhos em qualquer rede, por WebRTC** (`PeerTransport` em `src/net/transport.js`): o aparelho que cria a sala é o centro dela, guarda o log e retransmite os eventos; o convidado entra pelo link, QR Code ou código. Anfitrião e convidado podem recarregar a página e voltar para a partida. Escolhido automaticamente em páginas https sem servidor do jogo; o Wi-Fi local e o Artifact continuam como antes.
+
 ### Corrigido
 - **PvP no Wi-Fi entre aparelhos**: "Comprometer Frota" não iniciava a partida. A presença (heartbeat) entrava no log da sala e reconstruía a aba Online várias vezes por segundo, trocando o botão sob o dedo. Presença agora é só retransmitida.
 - **Convidado via QR Code** abria uma instância igual à do anfitrião (QR Code, "Criar Sala", "Excluir Sala"). O QR Code só aparece para o anfitrião de uma sala com vaga; o convidado vê apenas a sala em que entrou.
@@ -18,6 +22,7 @@ O formato baseia-se em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0
 - Publicações no servidor Wi-Fi são repetidas em caso de falha e avisam na tela se não chegarem.
 
 ### Testes
+- `tests/peer-transport-test.js`: regras do transporte WebRTC com um broker em memória.
 - `tests/lan-server-test.js`: regras do servidor Wi-Fi sem navegador.
 - `tests/lan-real-path-verify.js`: dois aparelhos pelo IP da rede, link do QR Code e cliques reais, com hosts externos bloqueados; roda no CI em job próprio.
 

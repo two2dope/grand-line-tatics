@@ -35,7 +35,9 @@
 
 ### No navegador, sem instalar nada
 
-Baixe o arquivo `grand-line-tactics.html` da [última release](../../releases/latest) e abra no navegador. Funciona contra a CPU e entre duas abas do mesmo aparelho.
+Abra [two2dope.github.io/grand-line-tatics](https://two2dope.github.io/grand-line-tatics/). Funciona contra a CPU e entre dois aparelhos em qualquer rede (veja "Duelo online").
+
+Ou baixe o arquivo `grand-line-tactics.html` da [última release](../../releases/latest) e abra no navegador. Funciona contra a CPU e entre duas abas do mesmo aparelho.
 
 ### Duas pessoas na mesma rede Wi-Fi
 
@@ -51,7 +53,14 @@ O servidor entrega o three.js e as fontes a partir do próprio computador, entã
 
 ### Duelo online
 
-O PvP pela internet roda quando o jogo é publicado como Artifact no claude.ai, sobre as capacidades `db` (salas e log de jogadas) e `room` (presença e reações). A declaração exata está em [docs/project/PUBLISH-NOTES.md](docs/project/PUBLISH-NOTES.md). Fora desse ambiente, o modo online mostra um aviso e o jogo contra a CPU continua completo.
+Na página publicada no GitHub Pages, abra a aba Online, toque em "Criar Sala" e envie o link ou o QR Code. O outro aparelho pode estar em qualquer rede. Não há servidor do jogo: os dois navegadores se conectam direto por WebRTC, e o aparelho que criou a sala guarda o log da partida.
+
+- A sala existe enquanto a aba do anfitrião estiver aberta. Se ele recarregar a página, retoma a sala e o convidado reconecta sozinho em alguns segundos.
+- Não há lista de salas abertas nesse modo: entra-se pelo link, QR Code ou código.
+- A apresentação entre os aparelhos usa o serviço público do [PeerJS](https://peerjs.com). Como em qualquer conexão direta, cada jogador vê o endereço IP do outro.
+- Redes muito restritivas (algumas redes corporativas e de operadora) podem impedir a conexão direta.
+
+O PvP também roda quando o jogo é publicado como Artifact no claude.ai, sobre as capacidades `db` (salas e log de jogadas) e `room` (presença e reações). A declaração exata está em [docs/project/PUBLISH-NOTES.md](docs/project/PUBLISH-NOTES.md). Fora desse ambiente, o modo online mostra um aviso e o jogo contra a CPU continua completo.
 
 ### Atalhos
 
@@ -89,12 +98,13 @@ npm run verify:artifact   # abre o arquivo isolado: zero erro de console e zero 
 | `npm run test:artifact` | Transporte sobre `db` e `room`, com as regras de acesso aplicadas | 17/17 |
 | `npm run test:ui` | Gerador de QR code e papéis de anfitrião e convidado na aba Online | 21/21 |
 | `npm run test:lan:server` | Regras do servidor Wi-Fi: dono da sala, salas ociosas, nada carregado de fora | 20/20 |
+| `npm run test:peer` | Regras do transporte WebRTC com um broker em memória: anfitrião como centro da sala, reconexão, fechamento | 36/36 |
 | `npm run test:e2e` | Partida completa no Chrome headless: PvC, técnicas, série e PvP em duas abas | 50/50 |
 | `npm run test:lan` | Servidor Wi-Fi com dois navegadores | 10/10 |
 | `npm run test:lan:real` | Caminho real no Wi-Fi: convidado pelo IP da rede, link do QR Code, cliques de verdade, hosts externos bloqueados (leva alguns minutos) | 17/17 |
 | `npm run test:sim` | 200.000 partidas CPU × CPU em todas as combinações; relatório em [tests/sim-report.md](tests/sim-report.md) | faixas aprovadas |
 
-`npm test` roda as suítes unitárias, o build e os E2E. O CI do GitHub roda a checagem de vazamentos, as suítes que não precisam de navegador e, em um job separado, o caminho real no Wi-Fi com o Chrome do runner.
+`npm test` roda as suítes unitárias, o build e os E2E. O CI do GitHub roda a checagem de vazamentos, as suítes que não precisam de navegador e, em um job separado, o caminho real no Wi-Fi com o Chrome do runner. Um push na `main` também publica o jogo no GitHub Pages (`.github/workflows/pages.yml`).
 
 Disparos médios até a vitória no 10×10 (simulação): Grumete 95,4 · Marujo 56,1 · Capitão 47,8 · Yonkou 42,3. Primeiro jogador entre IAs iguais vence 49,1% das vezes.
 
@@ -137,6 +147,8 @@ legacy/         código da primeira versão, mantido como referência
 ## Estado e limitações conhecidas
 
 - O PvP online foi validado contra um fake fiel das regras de acesso, mas ainda não entre duas contas reais na plataforma.
+- O PvP por WebRTC foi validado entre dois navegadores no mesmo computador, pelo serviço público de sinalização; falta validar entre redes diferentes e em celular. Não há teste automático de navegador para esse caminho.
+- No Wi-Fi e no WebRTC qualquer aparelho que conheça o código da sala pode publicar eventos nela; só o fechamento da sala é restrito a quem a criou.
 - 60 qps em celular e uso de memória em sessão longa ainda não foram medidos.
 - Alguns textos ficam cortados em telas de celular e tablet.
 - Revanche na mesma sala online não funciona; é preciso criar outra sala.

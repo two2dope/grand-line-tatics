@@ -41,6 +41,9 @@ jobs:
       - name: Wi-Fi relay server rules (room owner, idle rooms, no external hosts)
         run: node tests/lan-server-test.js
 
+      - name: WebRTC transport rules (host as hub, reconnect, room closing)
+        run: node tests/peer-transport-test.js
+
   browser:
     name: Wi-Fi real path in Chrome (LAN IP, QR link, real clicks)
     runs-on: ubuntu-latest

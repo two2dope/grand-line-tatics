@@ -3230,8 +3230,12 @@
         onStatus: function(kind, detail) {
           var T = getT();
           if (kind === 'error') {
-            var isLan = self.pvpBackend && self.pvpBackend.kind !== 'artifactDb';
-            self.announce(isLan ? T.lobby.lanWriteFailed : T.lobby.onlineWriteFailed);
+            var backendKind = self.pvpBackend ? self.pvpBackend.kind : '';
+            self.announce(backendKind === 'peer'
+              ? T.lobby.peerConnectionFailed
+              : (backendKind !== 'artifactDb' ? T.lobby.lanWriteFailed : T.lobby.onlineWriteFailed));
+          } else if (kind === 'reconnecting' && detail && detail.key === self.pvpRoomId) {
+            self.announce(T.lobby.peerReconnecting);
           } else if (kind === 'seat_taken' && detail && detail.key === self.pvpRoomId) {
             self.announce(T.lobby.seatTakenToast(detail.key));
             self.leavePvpRoom();
@@ -3641,7 +3645,9 @@
         // The published-Artifact transport binds seats itself (SEAT_BIND / seat_taken); the LAN
         // relay and the cross-tab channel have no such gate, so the lobby checks before joining.
         if (backendKind !== 'artifactDb') {
-          if (!roomExists) return abortJoin(T.lobby.roomNotFound(cleanCode));
+          if (!roomExists) {
+            return abortJoin(backendKind === 'peer' ? T.lobby.peerRoomNotFound(cleanCode) : T.lobby.roomNotFound(cleanCode));
+          }
           if (joinRole === 'player' && otherGuest) return abortJoin(T.lobby.roomFull(cleanCode));
         }
 
@@ -3690,7 +3696,8 @@
         return cleanCode;
       }
 
-      if ((backendKind === 'lanRelay' || backendKind === 'artifactDb') && typeof transport.readAsync === 'function') {
+      if ((backendKind === 'lanRelay' || backendKind === 'artifactDb' || backendKind === 'peer') && typeof transport.readAsync === 'function') {
+        if (backendKind === 'peer') this.announce(T.lobby.peerSearchingRoom(cleanCode));
         return transport.readAsync(cleanCode).then(function(evts) {
           return finishJoinWithEvents(evts || []);
         });
@@ -4926,7 +4933,9 @@
           ? T.lobby.lanReadyBadge
           : backendType === 'artifactDb'
             ? T.lobby.artifactDbReadyBadge
-            : T.lobby.crossTabReadyBadge)
+            : backendType === 'peer'
+              ? T.lobby.peerReadyBadge
+              : T.lobby.crossTabReadyBadge)
         : (this.pvpStatus === 'connecting' ? T.lobby.connectingBadge : this.pvpUnavailableText());
 
       var dotEl = document.createElement('span');
@@ -5005,6 +5014,14 @@
             '</ol>' +
           '</div>';
         pvpBox.appendChild(fileNotice);
+      } else if (backendType === 'peer') {
+        if (!this.pvpRoomId && !isGuestInstance) {
+          var peerHint = document.createElement('div');
+          peerHint.className = 'glt-lan-offline-hint';
+          peerHint.id = 'glt-peer-howto-hint';
+          peerHint.textContent = '🌐 ' + T.lobby.peerHowToHint;
+          pvpBox.appendChild(peerHint);
+        }
       } else if (backendType === 'broadcastChannel') {
         var lanHint = document.createElement('div');
         lanHint.className = 'glt-lan-offline-hint';
@@ -5169,6 +5186,9 @@
         pvpBox.appendChild(joinGroup);
 
         // Open Rooms List (Real Live Rooms + Delete / Clear Controls)
+        // Over WebRTC there is no room directory, so the section stays out of the page.
+        var roomsParent = pvpBox;
+        if (backendType === 'peer') pvpBox = document.createElement('div');
         var openHeaderRow = document.createElement('div');
         openHeaderRow.className = 'glt-open-rooms-header';
 
@@ -5251,6 +5271,7 @@
           });
         }
         pvpBox.appendChild(roomsList);
+        pvpBox = roomsParent;
 
         // Casual Bounty Board
         var bountyHeader = document.createElement('h4');
@@ -5361,7 +5382,8 @@
 
         // Room QR Code: only the host shows it, and only while the second seat is empty.
         if (isRoomHost && inLobbyPhase && !oppJoined) {
-          var roomShareUrl = self.getPreferredShareBaseUrl().replace(/\/$/, '') + '/?room=' + self.pvpRoomId;
+          var shareBase = self.getPreferredShareBaseUrl();
+          var roomShareUrl = (/\.html?$/i.test(shareBase) ? shareBase : shareBase.replace(/\/$/, '') + '/') + '?room=' + self.pvpRoomId;
           var roomQrCard = self.createQrCard(
             roomShareUrl,
             ((T.lobby && T.lobby.qrCodeRoomTitle) || 'QR Code da Sala') + ' (' + self.pvpRoomId + ')',

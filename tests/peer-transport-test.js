@@ -10,6 +10,8 @@
  *  - the host can refresh and take the room back with its log; the guest reconnects,
  *    also when the old channel never reports that it died;
  *  - only the host closes the room, and the guests are told;
+ *  - seat 1 belongs to the device that joined first: nobody else speaks for it, nobody
+ *    but the host speaks for seat 0, and a refresh keeps the seat;
  *  - which pages pick this transport.
  */
 
@@ -192,7 +194,7 @@ async function main() {
   check('Publisher hears its own event once', hostGot.filter(e => e.type === 'READY_COMMIT').length === 1);
 
   // ---- 2. presence ----
-  guest.heartbeat(ROOM, { playerId: 'g1' });
+  guest.heartbeat(ROOM, { playerId: 'g1', playerIndex: 1 });
   await tick();
   check('Presence is relayed to the host', hostGot.some(e => e.type === 'HEARTBEAT'));
   check('Presence is never stored', !host.read(ROOM).some(e => e.type === 'HEARTBEAT') && !guest.read(ROOM).some(e => e.type === 'HEARTBEAT'));
@@ -214,6 +216,33 @@ async function main() {
   guest.publish(ROOM, ev('SHOT_FIRE', { shooterIndex: 1 }));
   await tick();
   check('Host relays one guest to the other', watcherGot.some(e => e.type === 'SHOT_FIRE'));
+
+  // ---- 4b. seats ----
+  const seatOf = id => (host.read(ROOM).find(e => e.eventId === id) || {})._seat;
+  check('Host stamps its own events with seat 0', host.read(ROOM).find(e => e.type === 'ROOM_CREATED')._seat === 0);
+  check('Host stamps the guest events with seat 1', host.read(ROOM).find(e => e.type === 'ROOM_JOINED')._seat === 1);
+
+  const watcherStatus = [];
+  const intruder = new PeerTransport({ hub: watcherPage.hub, onStatus: kind => watcherStatus.push(kind) });
+  const asGuest = ev('SHOT_FIRE', { shooterIndex: 1 });
+  const asHost = ev('READY_COMMIT', { playerIndex: 0 });
+  intruder.publish(ROOM, asGuest);
+  intruder.publish(ROOM, asHost);
+  await tick();
+  check('A third device cannot speak for the guest seat', seatOf(asGuest.eventId) === undefined && !guestGot.some(e => e.eventId === asGuest.eventId));
+  check('A third device cannot speak for the host seat', seatOf(asHost.eventId) === undefined && !hostGot.some(e => e.eventId === asHost.eventId));
+
+  const lateJoin = ev('ROOM_JOINED', { role: 'player' });
+  intruder.publish(ROOM, lateJoin);
+  await tick();
+  check('A second device asking for the guest seat is refused', seatOf(lateJoin.eventId) === undefined && watcherStatus.includes('seat_taken'), watcherStatus.join(' '));
+
+  const guestAsHost = ev('SHOT_ANSWER', { defenderIndex: 0 });
+  check('The guest page refuses to publish for the host seat', guest.publish(ROOM, guestAsHost) === false);
+  const forged = ev('REACTION', { playerIndex: 1, _seat: 0 });
+  guest.publish(ROOM, forged);
+  await tick();
+  check('A forged seat stamp is replaced by the real one', seatOf(forged.eventId) === 1);
 
   // ---- 5. a room that is not there ----
   const strayPage = page(broker);

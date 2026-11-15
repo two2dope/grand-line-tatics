@@ -42,6 +42,8 @@ jobs:
         run: |
           mkdir _site
           cp index.html _site/index.html
+          # The page loads portraits, maps and emblems from assets/ at run time.
+          cp -r assets _site/assets
           touch _site/.nojekyll
 
       - uses: actions/upload-pages-artifact@v3

@@ -26,6 +26,28 @@ const ARTIFACT_FILE = fs.existsSync(path.join(ROOT_DIR, 'grand-line-tactics.html
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_EVENTS_PER_KEY = 600;
 const MAX_ROOMS = 100;
+// A room leaves "Salas Abertas" when its host stops sending presence (closed tab, lost Wi-Fi).
+const OPEN_ROOM_IDLE_MS = 90 * 1000;
+const OPEN_ROOM_SWEEP_MS = 10 * 1000;
+const VENDOR_THREE_FILE = path.join(ROOT_DIR, 'tools', 'vendor', 'three.min.js');
+const FONTS_CSS_FILE = path.join(ROOT_DIR, 'assets', 'fonts', 'fonts.css');
+const CDN_THREE_RE = /<script src="https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/three\.js\/r128\/three\.min\.js"><\/script>/;
+const CDN_FONTS_RE = /<link rel="preconnect" href="https:\/\/fonts\.googleapis\.com">\s*<link rel="preconnect" href="https:\/\/fonts\.gstatic\.com" crossorigin>\s*<link href="https:\/\/fonts\.googleapis\.com\/css2[^"]*" rel="stylesheet">/;
+
+/**
+ * Point the page at copies served by this machine, so a second device on a Wi-Fi without
+ * internet (hotspot, router with no uplink) still loads the game. Only what exists is rewritten.
+ */
+function localizeExternalAssets(html) {
+  let out = html;
+  if (fs.existsSync(VENDOR_THREE_FILE)) {
+    out = out.replace(CDN_THREE_RE, '<script src="/vendor/three.min.js"></script>');
+  }
+  if (fs.existsSync(FONTS_CSS_FILE)) {
+    out = out.replace(CDN_FONTS_RE, '<link href="/assets/fonts/fonts.css" rel="stylesheet">');
+  }
+  return out;
+}
 
 /**
  * Detecta endereços IPv4 da rede local (Wi-Fi / Ethernet), priorizando adaptadores físicos
@@ -82,9 +104,51 @@ function createLanServer() {
   const openRoomsMap = new Map();
   // key -> Set<http.ServerResponse>
   const sseSubscribers = new Map();
+  // roomId -> secret chosen by the device that opened the room; only it may close the room
+  const roomOwners = new Map();
+  // roomId -> last time anything (presence included) arrived for that room
+  const roomLastSeen = new Map();
+  // roomIds currently hidden from the open list because their host went quiet
+  const dormantRooms = new Set();
 
   function getOpenRoomsArray() {
-    return Array.from(openRoomsMap.values()).slice(-12);
+    return Array.from(openRoomsMap.values())
+      .filter(entry => !dormantRooms.has(entry.id))
+      .slice(-12);
+  }
+
+  function ownerAllows(roomId, token) {
+    const owner = roomOwners.get(roomId);
+    return !owner || (typeof token === 'string' && token === owner);
+  }
+
+  function forgetRoom(roomId) {
+    openRoomsMap.delete(roomId);
+    dormantRooms.delete(roomId);
+  }
+
+  function touchRoom(roomId) {
+    if (!openRoomsMap.has(roomId)) return;
+    roomLastSeen.set(roomId, Date.now());
+    if (dormantRooms.has(roomId)) {
+      // The host came back (screen unlocked, Wi-Fi returned): list the room again.
+      dormantRooms.delete(roomId);
+      const entry = Object.assign({}, openRoomsMap.get(roomId), { _transportMsgId: 'room_' + roomId + '_' + Date.now() });
+      openRoomsMap.set(roomId, entry);
+      broadcastSse('glt_open_rooms', entry);
+    }
+  }
+
+  function sweepIdleOpenRooms(now) {
+    const at = typeof now === 'number' ? now : Date.now();
+    for (const id of openRoomsMap.keys()) {
+      if (dormantRooms.has(id)) continue;
+      const seen = roomLastSeen.get(id) || 0;
+      if (at - seen > OPEN_ROOM_IDLE_MS) {
+        dormantRooms.add(id);
+        broadcastSse('glt_open_rooms', { type: 'ROOM_DELETED', id, reason: 'expired', _transportMsgId: 'exp_' + id + '_' + at });
+      }
+    }
   }
 
   function broadcastSse(key, event) {
@@ -104,24 +168,38 @@ function createLanServer() {
     if (!key || !event || typeof event !== 'object') return false;
 
     if (key === 'glt_open_rooms') {
+      if (event.type === 'ROOM_DELETED' && event.id && event.reason === 'started') {
+        // The match began: the room leaves the open list but its log stays (refresh/resume need it).
+        const startedId = String(event.id).toUpperCase();
+        if (!ownerAllows(startedId, event.ownerToken)) return false;
+        forgetRoom(startedId);
+        broadcastSse('glt_open_rooms', { type: 'ROOM_DELETED', id: startedId, reason: 'started', _transportMsgId: event._transportMsgId || ('started_' + Date.now()) });
+        return true;
+      }
       if (event.type === 'ROOM_DELETED' && event.id) {
         const cleanId = String(event.id).toUpperCase();
-        openRoomsMap.delete(cleanId);
+        // Closing a room ends the match for both devices: only the device that opened it may do so.
+        if (!ownerAllows(cleanId, event.ownerToken)) return false;
+        forgetRoom(cleanId);
         roomLogs.delete(cleanId);
+        roomOwners.delete(cleanId);
+        roomLastSeen.delete(cleanId);
         broadcastSse('glt_open_rooms', { type: 'ROOM_DELETED', id: cleanId, _transportMsgId: event._transportMsgId || ('del_' + Date.now()) });
         broadcastSse(cleanId, { type: 'ROOM_DELETED', id: cleanId, _transportMsgId: 'del_' + Date.now() });
         return true;
       }
       if (event.type === 'ROOMS_CLEARED') {
-        for (const id of openRoomsMap.keys()) {
-          roomLogs.delete(id);
-        }
-        openRoomsMap.clear();
-        broadcastSse('glt_open_rooms', { type: 'ROOMS_CLEARED', _transportMsgId: event._transportMsgId || ('clr_' + Date.now()) });
-        return true;
+        // No device may wipe everybody's rooms. Abandoned rooms leave the list by themselves
+        // (see sweepIdleOpenRooms) and each host closes only the room it opened.
+        return false;
       }
       if (event.id) {
         const cleanId = String(event.id).toUpperCase();
+        const token = typeof event.ownerToken === 'string' ? event.ownerToken.slice(0, 64) : '';
+        if (!ownerAllows(cleanId, token)) return false; // somebody else already owns this code
+        if (token && !roomOwners.has(cleanId)) roomOwners.set(cleanId, token);
+        dormantRooms.delete(cleanId);
+        roomLastSeen.set(cleanId, Date.now());
         const entry = {
           id: cleanId,
           host: String(event.host || 'Capitão').slice(0, 24),
@@ -135,7 +213,7 @@ function createLanServer() {
         openRoomsMap.set(cleanId, entry);
         while (openRoomsMap.size > 20) {
           const oldest = openRoomsMap.keys().next().value;
-          openRoomsMap.delete(oldest);
+          forgetRoom(oldest);
         }
         broadcastSse('glt_open_rooms', entry);
         return true;
@@ -143,10 +221,21 @@ function createLanServer() {
       return false;
     }
 
+    touchRoom(String(key).toUpperCase());
+
+    // Presence is live-only: storing it would push ROOM_CREATED / READY_COMMIT out of the capped log.
+    if (event.type === 'HEARTBEAT') {
+      broadcastSse(key, event);
+      return true;
+    }
+
     if (!roomLogs.has(key)) {
       if (roomLogs.size >= MAX_ROOMS) {
         const oldestKey = roomLogs.keys().next().value;
         roomLogs.delete(oldestKey);
+        roomOwners.delete(oldestKey);
+        roomLastSeen.delete(oldestKey);
+        forgetRoom(oldestKey);
       }
       roomLogs.set(key, []);
     }
@@ -199,9 +288,10 @@ function createLanServer() {
         };
         const safeJson = JSON.stringify(lanConfig).replace(/</g, '\\u003c');
         const injectedScript = `<script>window.__GLT_LAN_CONFIG__=${safeJson};</script>`;
-        const finalHtml = rawHtml.includes('</head>')
-          ? rawHtml.replace('</head>', `${injectedScript}\n</head>`)
-          : `${injectedScript}\n${rawHtml}`;
+        const localHtml = localizeExternalAssets(rawHtml);
+        const finalHtml = localHtml.includes('</head>')
+          ? localHtml.replace('</head>', `${injectedScript}\n</head>`)
+          : `${injectedScript}\n${localHtml}`;
 
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
@@ -319,8 +409,8 @@ function createLanServer() {
         try {
           const parsed = JSON.parse(body || '{}');
           const ok = appendRoomEvent(String(parsed.key || '').trim(), parsed.event);
-          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-          res.end(JSON.stringify({ ok }));
+          res.writeHead(ok ? 200 : 403, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify(ok ? { ok } : { ok, error: 'Refused' }));
         } catch (_) {
           res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({ ok: false, error: 'Invalid JSON' }));
@@ -337,17 +427,16 @@ function createLanServer() {
         return;
       }
 
-      const clearAll = parsedUrl.searchParams.get('all') === '1';
       const roomId = (parsedUrl.searchParams.get('id') || '').trim().toUpperCase();
+      const ownerToken = parsedUrl.searchParams.get('token') || '';
+      // "?all=1" used to wipe every room on the server; it is refused now.
+      const deleted = Boolean(roomId) && parsedUrl.searchParams.get('all') !== '1' &&
+        appendRoomEvent('glt_open_rooms', { type: 'ROOM_DELETED', id: roomId, ownerToken });
 
-      if (clearAll) {
-        appendRoomEvent('glt_open_rooms', { type: 'ROOMS_CLEARED' });
-      } else if (roomId) {
-        appendRoomEvent('glt_open_rooms', { type: 'ROOM_DELETED', id: roomId });
-      }
-
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: true, openRooms: getOpenRoomsArray() }));
+      res.writeHead(deleted ? 200 : 403, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(deleted
+        ? { ok: true, openRooms: getOpenRoomsArray() }
+        : { ok: false, error: 'Only the device that opened a room can close it' }));
       return;
     }
 
@@ -357,11 +446,24 @@ function createLanServer() {
       return;
     }
 
-    // 7. Arquivos estáticos (Assets: retratos, sinetes, mapas e bênçãos)
+    // 7. three.js local (o HTML servido aponta para cá em vez do CDN)
+    if (req.method === 'GET' && pathname === '/vendor/three.min.js' && fs.existsSync(VENDOR_THREE_FILE)) {
+      res.writeHead(200, {
+        'Content-Type': 'text/javascript; charset=utf-8',
+        'Cache-Control': 'public, max-age=86400'
+      });
+      fs.createReadStream(VENDOR_THREE_FILE).pipe(res);
+      return;
+    }
+
+    // 8. Arquivos estáticos (Assets: retratos, sinetes, mapas, bênçãos e fontes)
     if (req.method === 'GET' && pathname.startsWith('/assets/')) {
-      const safeRel = path.normalize(pathname).replace(/^(\.\.[\/\\])+/, '');
-      const filePath = path.join(ROOT_DIR, safeRel);
-      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      const assetsRoot = path.join(ROOT_DIR, 'assets');
+      let decodedPath = '';
+      try { decodedPath = decodeURIComponent(pathname); } catch (_) { decodedPath = ''; }
+      const filePath = path.join(ROOT_DIR, path.normalize(decodedPath));
+      const insideAssets = decodedPath !== '' && filePath.startsWith(assetsRoot + path.sep);
+      if (insideAssets && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         const ext = path.extname(filePath).toLowerCase();
         const mimeTypes = {
           '.jpg': 'image/jpeg',
@@ -369,6 +471,8 @@ function createLanServer() {
           '.png': 'image/png',
           '.webp': 'image/webp',
           '.svg': 'image/svg+xml',
+          '.css': 'text/css; charset=utf-8',
+          '.woff2': 'font/woff2',
           '.glb': 'model/gltf-binary',
           '.gltf': 'model/gltf+json'
         };
@@ -384,6 +488,12 @@ function createLanServer() {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('Não encontrado');
   });
+
+  const sweepTimer = setInterval(sweepIdleOpenRooms, OPEN_ROOM_SWEEP_MS);
+  if (sweepTimer.unref) sweepTimer.unref();
+  server.on('close', () => clearInterval(sweepTimer));
+  // Exposed for tests: run the idle sweep as if the clock read `now`.
+  server.sweepIdleOpenRooms = sweepIdleOpenRooms;
 
   return server;
 }
@@ -448,4 +558,4 @@ if (require.main === module) {
   tryListen(preferredPort, 10);
 }
 
-module.exports = { createLanServer, detectLanUrls };
+module.exports = { createLanServer, detectLanUrls, localizeExternalAssets };

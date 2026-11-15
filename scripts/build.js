@@ -825,6 +825,30 @@ input[type="text"] {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+/* A long option never runs under the arrow: it ends in an ellipsis */
+select {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+select:disabled,
+.glt-rule-chip:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.glt-rules-locked-note {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gold-bright);
+  background: rgba(245, 166, 35, 0.1);
+  border: 1px solid var(--border-brass);
+  border-radius: 6px;
+  padding: 6px 9px;
+  line-height: 1.4;
+}
+
 select:hover,
 input[type="text"]:hover {
   border-color: var(--border-highlight);
@@ -2027,6 +2051,21 @@ input[type="range"] {
   font-family: var(--font-pirate);
   font-size: 24px;
   color: var(--gold-bright);
+  text-align: center;
+  text-wrap: balance;
+}
+
+.modal-ceremony .glt-modal-header-row {
+  justify-content: center;
+}
+
+/* Badges inside the ceremony wrap inside the modal instead of running off both sides */
+.glt-ceremony-box .glt-badge {
+  white-space: normal;
+  max-width: 100%;
+  text-align: center;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
 }
 
 .glt-wanted-poster-canvas,
@@ -3111,10 +3150,36 @@ input[type="range"] {
   margin-top: -2px;
   margin-bottom: 6px;
   text-align: center;
+  text-wrap: balance;
 }
 
 .glt-theme-light .glt-ceremony-forfeit-subtitle {
   color: #be123c;
+}
+
+/* Victory modal on a phone (after the base rules it overrides) */
+@media (max-width: 520px) {
+  .glt-modal-box.modal-ceremony {
+    padding: 14px 12px;
+  }
+
+  .glt-ceremony-title {
+    font-size: 20px;
+    line-height: 1.25;
+  }
+
+  /* One stat per line, label left and value right: no label wraps */
+  .glt-stats-grid {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .stat-item {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
 }
 
 /* ===== Portado do branch feat/v2.0-minishoot-chibi: tablet, QR, regras do PvP, revanche ===== */

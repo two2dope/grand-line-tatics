@@ -35,5 +35,33 @@ jobs:
       - name: Artifact db transport
         run: node tests/artifact-db-test.js
 
-      - name: QR code encoder
+      - name: QR code encoder and Online tab roles
         run: node tests/qr-test.js
+
+      - name: Wi-Fi relay server rules (room owner, idle rooms, no external hosts)
+        run: node tests/lan-server-test.js
+
+      - name: WebRTC transport rules (host as hub, reconnect, room closing)
+        run: node tests/peer-transport-test.js
+
+  browser:
+    name: Wi-Fi real path in Chrome (LAN IP, QR link, real clicks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build single-file game
+        run: node scripts/build.js
+
+      # Uses the Chrome that ships with the runner image (software WebGL).
+      - name: Two devices over the LAN relay
+        run: node tests/lan-real-path-verify.js

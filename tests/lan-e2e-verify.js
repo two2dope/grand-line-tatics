@@ -11,7 +11,8 @@
  * 3. XSS hardening: malicious HTML nickname (`<img src=x onerror=window.__xss=1>`) renders strictly as safe text.
  * 4. Device B joins room, exchanges Den Den Mushi reaction with Device A, commits SHA-256 fleet,
  *    enters live PvP BATTLE, and synchronizes cannon shots across isolated devices!
- * 5. Room deletion (`Excluir Sala` & `Limpar Salas`) removes rooms across both devices in real time!
+ * 5. Room deletion (`Excluir Sala`) by the host removes the room across both devices in real time;
+ *    the other device gets no delete button for a room it did not open.
  */
 
 'use strict';
@@ -245,7 +246,7 @@ async function runLanE2E() {
       hasDeleteBtn: Boolean(document.querySelector('#content-tab-pvp .btn-delete-room'))
     }))()`);
     check('Untrusted LAN nickname rendered strictly as textContent (zero DOM XSS)', !xssCheck.xssTriggered && xssCheck.injectedImgCount === 0, JSON.stringify(xssCheck));
-    check('Open room card renders accessible Excluir Sala (✕) button', xssCheck.hasDeleteBtn);
+    check('Open room card on another device has no Excluir Sala (✕) button', !xssCheck.hasDeleteBtn);
 
     // 3. Device B joins room via async LAN hydration, sends Den Den Mushi emote to Device A
     await devB.session.eval(`(async () => {

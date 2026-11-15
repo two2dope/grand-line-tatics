@@ -1,0 +1,61 @@
+name: Pages
+
+# Publishes the single-file game to GitHub Pages. The page needs no server:
+# PvP between devices runs over WebRTC (src/net/transport.js, PeerTransport).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build the page
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Leak check
+        run: node scripts/check-leaks.js
+
+      - name: Build single-file game
+        run: node scripts/build.js
+
+      - name: WebRTC transport rules
+        run: node tests/peer-transport-test.js
+
+      - name: Assemble site
+        run: |
+          mkdir _site
+          cp index.html _site/index.html
+          touch _site/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

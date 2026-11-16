@@ -7,7 +7,15 @@ O formato baseia-se em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0
 
 ## [Não lançado]
 
+### Adicionado (celular)
+- **Jogo instalável (PWA)**: manifesto, ícones e service worker. Instalado, abre pela tela inicial em tela cheia; depois da primeira visita abre e joga contra a IA sem internet. A página continua vindo da rede quando há conexão, então cada publicação aparece na próxima abertura. Ajustes ganhou a seção "Aplicativo" (instalar, tela cheia, vibração, estado offline).
+- **Tela cheia**: botão na barra de cima. Celular deitado entra em tela cheia no primeiro toque; sair à mão desliga isso até a próxima vez que o celular for girado.
+- **Celular deitado**: cena e painel lado a lado. Antes a cena ficava com uns 120 px de altura e o radar saía da tela; agora o radar das águas inimigas ocupa a altura do painel com FOGO, técnica e Log Pose numa coluna ao lado (testado de 667x375 a 932x430).
+- **Toque**: arrastar o painel além do fim não puxa mais a página (sem recarregar a partida por "puxar para atualizar"), toques respondem sem a espera do toque duplo, toque longo no tabuleiro não abre o menu de copiar. Tela não apaga durante a batalha. Vibração curta em acertos e naufrágios (Android).
+- Margens para o entalhe e a barra inferior do iPhone no app instalado.
+
 ### Corrigido (rodada de testes em celular e computador)
+- **Placar do PvP em tempo real**: a aba Esquadra mostrava a lista parada (inimigos sempre "???", seus navios sempre "Intacto"). Agora cada tiro respondido atualiza os dois aparelhos: navio inimigo afundado aparece como afundado, os seus como avariados ou afundados, contagem de navios nas duas frotas e uma linha com disparos, acertos e precisão de cada lado. O mini-radar sobre a cena (painel recolhido) também redesenha a cada tiro, e a "maior sequência de acertos" do fim da partida online é contada de verdade.
 - **Assentos protegidos**: no Wi-Fi e no WebRTC, só o aparelho que ocupou um assento publica eventos por ele. O servidor Wi-Fi e o anfitrião WebRTC carimbam cada evento com o assento verdadeiro; um segundo aparelho que tenta entrar como jogador recebe "sala cheia".
 - **Técnicas no PvP**: as seis técnicas mostram a faixa, o resultado (Haki do Rei, Room, Observação) no diário e no leitor de tela, para os dois jogadores. A célula revelada por Observação aparece no radar. A técnica não é mais gasta numa célula padrão quando nenhuma foi escolhida, nem disparada com uma jogada ainda sem resposta; usa a tripulação comprometida, não a da aba Combate.
 - **Bênçãos**: abrir a bênção ganha na tela de vitória não apaga mais o cartaz e o botão de revanche. A janela abre por cima, fecha com Esc e devolve o foco. Cartões respondem a Enter e Espaço. Bênção bloqueada aparece como bloqueada; todas dizem que são relíquias de coleção.

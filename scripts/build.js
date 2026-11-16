@@ -69,6 +69,7 @@ const SOURCE_FILES = [
   'src/sea/fx-bridge.js',
   'src/audio/sfx.js',
   'src/ui/qrcode.js',
+  'src/ui/app-shell.js',
   'src/ui/ui.js'
 ];
 
@@ -148,6 +149,33 @@ html, body {
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.4;
+  /* A finger dragging past the end of the panel must not pull the page: no rubber band,
+     no pull-to-refresh reloading the match. */
+  overscroll-behavior: none;
+}
+
+/* Touch: taps act at once (no double-tap zoom wait), a long press on the board or the radar
+   opens no copy/share callout. Pinch zoom of the page stays available for reading. */
+button,
+select,
+input,
+label,
+[role="button"],
+[role="tab"],
+.glt-radar-table td {
+  touch-action: manipulation;
+}
+
+.glt-viewport-container,
+.glt-radar-table {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+}
+
+.glt-app-note {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
 }
 
 /* Custom Brass & Abyssal Scrollbars */
@@ -206,6 +234,9 @@ button {
   position: relative;
   background: var(--bg-primary);
   color: var(--text-primary);
+  /* Installed app and full screen draw under the notch and the home bar (viewport-fit=cover):
+     keep the controls out of them. Zero in a normal browser tab. */
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
 }
 
 /* 1. TOP SCOREBOARD BUG & HUD */
@@ -738,6 +769,7 @@ button {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior: contain;
   padding: 9px 10px;
 }
 
@@ -1235,6 +1267,12 @@ input[type="range"] {
   font-size: 11.5px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+.glt-fleet-tally {
+  justify-content: flex-start;
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 /* 2D Tactical Radar Grid (Semantic Table) */
@@ -4041,7 +4079,229 @@ input[type="range"] {
   font-size: 10px;
   color: var(--text-muted);
 }
+
+/* =========================================================================
+   PHONE TURNED SIDEWAYS (short landscape screen)
+   Stacking scene over panel left the 3D view about 120px tall and the radar off screen.
+   Side by side instead: scene on the left, panel on the right; in battle the enemy radar
+   takes the panel's height with FOGO, technique and Log Pose in a column beside it.
+   ========================================================================= */
+@media (orientation: landscape) and (max-height: 520px) {
+  #glt-top-hud {
+    min-height: 34px;
+    padding: 2px 8px;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+
+  .glt-main-title {
+    font-size: 17px;
+  }
+
+  .glt-subtitle,
+  .badge-sea,
+  .glt-bounty-pill {
+    display: none;
+  }
+
+  .glt-status-bug {
+    min-width: 0;
+    overflow: hidden;
+    gap: 4px;
+  }
+
+  .glt-badge,
+  .glt-turn-pill,
+  .glt-timer-pill {
+    font-size: 8px;
+    padding: 3px 6px;
+  }
+
+  .glt-icon-btn {
+    width: 30px;
+    height: 30px;
+    font-size: 13px;
+  }
+
+  #glt-workspace {
+    flex-direction: row;
+  }
+
+  .glt-viewport-container,
+  #glt-workspace:has(#content-tab-gameplay.active .glt-battle-panel) .glt-viewport-container:not(.panel-collapsed) {
+    height: auto;
+    flex: 1 1 auto;
+  }
+
+  .glt-side-panel,
+  #glt-workspace:has(#content-tab-gameplay.active .glt-battle-panel) .glt-side-panel:not(.collapsed) {
+    width: clamp(300px, 46vw, 440px);
+    height: auto;
+    border-top: none;
+    border-left: 2px solid var(--border-brass);
+  }
+
+  .glt-tab-btn {
+    padding: 6px 2px;
+    font-size: 10.5px;
+  }
+
+  .glt-tab-content-wrapper {
+    padding: 6px 8px;
+  }
+
+  .glt-setup-cta-bar {
+    top: -6px;
+  }
+
+  .glt-footer {
+    padding: 1px 8px;
+  }
+
+  .glt-disclaimer {
+    font-size: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .glt-keyboard-help {
+    display: none;
+  }
+
+  /* scene overlays sized for a short view */
+  .glt-camera-bar {
+    top: 6px;
+    left: 6px;
+    gap: 4px;
+  }
+
+  .glt-pill-btn {
+    font-size: 9.5px;
+    padding: 3px 7px;
+  }
+
+  .glt-rival-overlay {
+    top: auto;
+    bottom: 6px;
+    right: 6px;
+    left: auto;
+    max-width: 195px;
+  }
+
+  .glt-captain-avatar {
+    width: 30px;
+    height: 30px;
+  }
+
+  .glt-taunt-bubble {
+    font-size: 9.5px;
+    padding: 4px 7px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .glt-aim-badge {
+    bottom: 6px;
+    left: 6px;
+    font-size: 10px;
+    padding: 3px 8px;
+    max-width: 165px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* battle: radar | firing column; everything else full width below */
+  .glt-battle-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 92px;
+    align-items: start;
+    gap: 6px;
+  }
+
+  .glt-battle-panel > * {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+
+  .glt-battle-panel > .glt-radar-grid-wrapper:not(.glt-mini-radar) {
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: center;
+    padding: 3px 5px;
+    gap: 2px;
+  }
+
+  /* the grid height follows its width here (fitBattleRadar sizes it to the panel) */
+  .glt-battle-panel .radar-cell {
+    min-height: 17px;
+  }
+
+  .glt-battle-panel > .glt-battle-triggers {
+    grid-column: 2;
+    grid-row: 1;
+    grid-template-columns: 1fr;
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+    gap: 6px;
+  }
+
+  .glt-battle-panel > .glt-battle-triggers .btn-fire {
+    grid-column: auto;
+    font-size: 11px;
+    padding: 12px 4px;
+    letter-spacing: 0.5px;
+  }
+
+  .glt-battle-panel > .glt-battle-triggers .glt-btn {
+    min-height: 44px;
+    padding: 6px 4px;
+    font-size: 10.5px;
+    line-height: 1.2;
+    white-space: normal;
+  }
+}
 `;
+}
+
+// Folders the service worker stores on install, so the game opens and plays the AI offline.
+// maps/ (2.3 MB of chart and island art) is cached the first time each image is shown instead.
+const PRECACHE_FOLDERS = ['icons', 'portraits', 'emblems', 'officers', 'ships', 'props', 'hazards', 'techniques', 'blessings', 'backgrounds'];
+
+/**
+ * Writes sw.js from src/sw/sw.js: the file list to store and a version that changes whenever
+ * the page or any stored file changes (a new version drops the old cache).
+ */
+function writeServiceWorker(html) {
+  const crypto = require('crypto');
+  const files = [];
+  PRECACHE_FOLDERS.forEach(folder => {
+    const dir = path.join(ROOT_DIR, 'assets', folder);
+    if (!fs.existsSync(dir)) return;
+    fs.readdirSync(dir).sort().forEach(name => {
+      if (/\.(png|jpe?g|webp|svg)$/i.test(name)) files.push({ url: 'assets/' + folder + '/' + name, size: fs.statSync(path.join(dir, name)).size });
+    });
+  });
+  const hash = crypto.createHash('sha256');
+  hash.update(html);
+  files.forEach(f => hash.update(f.url + ':' + f.size));
+  const manifestPath = path.join(ROOT_DIR, 'manifest.webmanifest');
+  if (fs.existsSync(manifestPath)) hash.update(fs.readFileSync(manifestPath));
+  const version = hash.digest('hex').slice(0, 12);
+
+  // scripts the page loads from a CDN (Three.js): taken from the page, so the URL lives in one place
+  const cdnScripts = Array.from(html.matchAll(/<script src="(https:\/\/[^"]+)"><\/script>/g), m => m[1]);
+  const precache = ['./index.html', 'manifest.webmanifest'].concat(files.map(f => f.url), cdnScripts);
+  const template = fs.readFileSync(path.join(ROOT_DIR, 'src', 'sw', 'sw.js'), 'utf8');
+  const sw = template
+    .replace("'__VERSION__'", JSON.stringify(version))
+    .replace('__PRECACHE__', JSON.stringify(precache, null, 2));
+  fs.writeFileSync(path.join(ROOT_DIR, 'sw.js'), sw, 'utf8');
+  const kb = files.reduce((n, f) => n + f.size, 0) / 1024;
+  console.log(`✓ Service worker: sw.js (versão ${version}, ${precache.length} arquivos, ${kb.toFixed(0)} KB de imagens)`);
 }
 
 function build() {
@@ -4067,6 +4327,18 @@ function build() {
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
   <title>Grand Line Tactics</title>
+
+  <!-- PWA: installable app (manifest, icons, browser bar colour). sw.js is registered by src/ui/app-shell.js.
+       scripts/build-artifact.js removes this block: the single-file artifact has no files beside it. -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#061121">
+  <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="GL Tactics">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- /PWA -->
 
   <!-- Google Fonts (Latin & Latin-Extended coverage for Portuguese accents ç ã õ é ê í ó ú) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -4111,6 +4383,7 @@ ${moduleCodes}
 
   fs.writeFileSync(outIndex, html, 'utf8');
   fs.writeFileSync(outTactics, html, 'utf8');
+  writeServiceWorker(html);
   // dist/grand-line-tactics.html (images embedded) is produced by scripts/build-artifact.js
 
   console.log(`✓ Gerado com sucesso: ${outIndex} (${(html.length / 1024).toFixed(1)} KB)`);

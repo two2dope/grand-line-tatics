@@ -124,6 +124,12 @@ async function buildArtifact() {
 
   let html = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
 
+  // The installable-app block points at files next to index.html (manifest, icons); the
+  // single-file artifact has none, and runs in a frame where app-shell.js skips the worker.
+  const pwaBlock = /\n\s*<!-- PWA:[\s\S]*?<!-- \/PWA -->/;
+  if (!pwaBlock.test(html)) throw new Error('Bloco PWA nao encontrado no HTML base');
+  html = html.replace(pwaBlock, '');
+
   const used = new Set();
   html.replace(LITERAL_RE, (_, q, rel) => { used.add(rel); return _; });
   if (SKY_DYNAMIC_RE.test(html)) listSkyKeys().forEach(k => used.add(k));

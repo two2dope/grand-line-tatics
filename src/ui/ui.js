@@ -152,6 +152,10 @@
 
     init: function(options) {
       options = options || {};
+      if (GLT.appShell && !GLT.appShell._started) {
+        GLT.appShell._started = true;
+        GLT.appShell.init();
+      }
       this.audio = GLT.audio || null;
       this.seriesMemory = (GLT.ai && GLT.ai.createSeriesMemory) ? GLT.ai.createSeriesMemory() : null;
 
@@ -363,11 +367,33 @@
         self.toggleSidePanelCollapse();
       });
 
+      // Full screen: shown only where the browser allows it for a page (not iPhone Safari, not
+      // the installed app, which has no browser bars to hide).
+      var shell = GLT.appShell || null;
+      var fullscreenBtn = makeQuickBtn('btn-toggle-fullscreen', '', T.ui.fullscreenEnter, false);
+      fullscreenBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
+      fullscreenBtn.addEventListener('click', function() {
+        if (shell) shell.toggleFullscreen();
+      });
+      function syncFullscreenBtn() {
+        var show = !!shell && shell.canFullscreen() && !shell.isStandalone();
+        fullscreenBtn.style.display = show ? '' : 'none';
+        var on = !!shell && shell.isFullscreen();
+        fullscreenBtn.classList.toggle('active', on);
+        fullscreenBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        var label = on ? T.ui.fullscreenExit : T.ui.fullscreenEnter;
+        fullscreenBtn.setAttribute('aria-label', label);
+        fullscreenBtn.title = label;
+      }
+      syncFullscreenBtn();
+      if (shell) shell.onChange(syncFullscreenBtn);
+
       quickTools.appendChild(soundBtn);
       quickTools.appendChild(shantyBtn);
       quickTools.appendChild(pauseBtn);
       quickTools.appendChild(radarBtn);
       quickTools.appendChild(themeBtn);
+      quickTools.appendChild(fullscreenBtn);
       quickTools.appendChild(collapseSidePanelBtn);
 
       topHud.appendChild(brandGroup);
@@ -703,6 +729,8 @@
       // The panes share one scroll box: without this a tab opens scrolled to wherever the last one was.
       var scrollBox = this.dom.tabGameplay ? this.dom.tabGameplay.parentNode : null;
       if (scrollBox && this._shownTabId !== tabId) scrollBox.scrollTop = 0;
+      // Ajustes shows app state that changes after start (install prompt, offline cache, full screen).
+      if (tabId === 'tab-settings' && this._shownTabId !== tabId && typeof this.renderSettingsTab === 'function') this.renderSettingsTab();
       this._shownTabId = tabId;
       if (this.gamePhase === 'BATTLE' && typeof this.fitBattleRadar === 'function') this.fitBattleRadar();
 
@@ -1042,9 +1070,9 @@
       var revealedSet = {};
 
       if (this.isPvpMode && this.pvpClient && this.pvpClient.state && this.pvpClient.state.boards) {
-        var myIdx = this.pvpClient.playerIndex;
+        var myIdx = this.pvpClient.role === 'player' ? this.pvpClient.playerIndex : 0;
         var oppIdx = 1 - myIdx;
-        myShots = (this.pvpClient.state.boards[myIdx] && this.pvpClient.state.boards[myIdx].shots) || {};
+        myShots =(this.pvpClient.state.boards[myIdx] && this.pvpClient.state.boards[myIdx].shots) || {};
         oppShots = (this.pvpClient.state.boards[oppIdx] && this.pvpClient.state.boards[oppIdx].shots) || {};
       } else if (this.matchState && this.matchState.players) {
         myShots = (this.matchState.players[1] && this.matchState.players[1].shotsTaken) || {};
@@ -2232,6 +2260,7 @@
         this.spawnMangaImpact(defenderIdx, r, c, 'water', 'ざばーん!!', 'ÁGUA');
       } else if (outcome === 'hit') {
         if (playAudio && this.audio) this.audio.playHit();
+        if (playAudio && GLT.appShell) GLT.appShell.vibrate('hit');
         if (this.fx && worldPos) this.fx.spawnHitExplosion(worldPos);
         if (this.platesSystem) {
           this.platesSystem.seaPlates.addShotMarker(defenderIdx, r, c, 'hit');
@@ -2245,6 +2274,7 @@
         }
       } else if (outcome === 'sunk') {
         if (playAudio && this.audio) this.audio.playSunk();
+        if (playAudio && GLT.appShell) GLT.appShell.vibrate('sunk');
         if (this.fx && worldPos) this.fx.spawnHitExplosion(worldPos, 'sunk');
         if (this.platesSystem) {
           if (this.platesSystem.triggerScreenShake) this.platesSystem.triggerScreenShake(0.9, 0.55);
@@ -2926,7 +2956,15 @@
 
         var myShotValues = Object.keys(pSt.boards[myIdx].shots).map(function(k) { return pSt.boards[myIdx].shots[k]; });
         var hitsCount = myShotValues.filter(function(s) { return s.outcome === 'hit' || s.outcome === 'sunk'; }).length;
-        pStats = { shots: myShotValues.length, hits: hitsCount, longestStreak: hitsCount > 0 ? Math.min(hitsCount, 4) : 0 };
+        // Longest run of consecutive hits among my own shots, in the order they were answered.
+        var streak = 0;
+        var bestStreak = 0;
+        (pSt.shotHistory || []).forEach(function(h) {
+          if (h.shooterIndex !== myIdx) return;
+          streak = (h.outcome === 'hit' || h.outcome === 'sunk') ? streak + 1 : 0;
+          if (streak > bestStreak) bestStreak = streak;
+        });
+        pStats = { shots: myShotValues.length, hits: hitsCount, longestStreak: bestStreak };
         totalTurns = pSt.turnNumber;
       } else if (this.matchState) {
         winnerIdx = this.matchState.winner !== null ? this.matchState.winner : 0;
@@ -4065,6 +4103,7 @@
         this.updateTopHudStatus();
         this.renderGameplayTab();
         this.renderFleetTab();
+        this.renderHudMinimap(); // the radar over the 3D view when the side panel is folded
       }
 
       // Transition to Ceremony when PvP game concludes
@@ -4884,9 +4923,16 @@
       this.renderHudMinimap();
     },
 
+    /** Phone or narrow window, upright (panel under the scene) or sideways (panel beside it). */
     isNarrowLayout: function() {
       return typeof window !== 'undefined' && typeof window.matchMedia === 'function' &&
-        window.matchMedia('(max-width: 900px)').matches;
+        (window.matchMedia('(max-width: 900px)').matches || this.isCompactLandscape());
+    },
+
+    /** Phone turned sideways: short screen, scene and panel side by side (see build.js CSS). */
+    isCompactLandscape: function() {
+      return typeof window !== 'undefined' && typeof window.matchMedia === 'function' &&
+        window.matchMedia('(orientation: landscape) and (max-height: 520px)').matches;
     },
 
     /** 'enemy' = only the waters being attacked; 'both' = own waters below. Phones start on 'enemy'. */
@@ -4923,7 +4969,7 @@
       var topInContent = radar.getBoundingClientRect().top - wrap.getBoundingClientRect().top + wrap.scrollTop;
       var frame = radar.offsetHeight - width; // title and padding around the square grid
       var room = wrap.clientHeight - topInContent - 12 - frame;
-      var fitted = Math.max(230, Math.floor(room));
+      var fitted = Math.max(this.isCompactLandscape() ? 170 : 230, Math.floor(room));
       if (fitted < width) radar.style.maxWidth = fitted + 'px';
     },
 
@@ -5851,46 +5897,64 @@
         });
         fleetBox.appendChild(p0List);
 
-      } else if (this.isPvpMode && this.pvpClient && this.pvpClient.state && this.pvpClient.state.phase === 'playing') {
+      } else if (this.isPvpMode && this.pvpClient && this.pvpClient.state &&
+                 (this.pvpClient.state.phase === 'playing' || this.pvpClient.state.phase === 'game_over')) {
+        // Live from the shared match state: every answered shot updates both lists.
+        var pvpSt = this.pvpClient.state;
         var myP = this.pvpClient.role === 'player' ? this.pvpClient.playerIndex : 0;
-        var oppBoard = this.pvpClient.state.boards[myP];
+        var oppP = 1 - myP;
+        var myBoardView = pvpSt.boards[myP] || { shots: {}, sunkShips: [], remainingShips: 0, totalShips: 0 };  // my shots at the rival
+        var rivalBoardView = pvpSt.boards[oppP] || { shots: {}, sunkShips: [], remainingShips: 0, totalShips: 0 }; // rival's shots at me
 
-        // 1. Enemy Fleet Status (ON TOP)
+        // 1. Enemy Fleet Status (ON TOP): sunk ships are named in the answers, the rest stay unknown.
         var p1TitlePvp = document.createElement('h4');
         p1TitlePvp.className = 'glt-group-title';
-        p1TitlePvp.textContent = '🎯 ' + T.ui.enemyFleetStatus + ' (' + (oppBoard ? oppBoard.remainingShips : 0) + '/' + (oppBoard ? oppBoard.totalShips : 0) + ')';
+        p1TitlePvp.textContent = '🎯 ' + T.ui.enemyFleetStatus + ' (' + myBoardView.remainingShips + '/' + myBoardView.totalShips + ')';
         fleetBox.appendChild(p1TitlePvp);
+        fleetBox.appendChild(this.buildPvpShotTally(myBoardView.shots));
 
         var p1ListPvp = document.createElement('div');
         p1ListPvp.className = 'glt-fleet-list';
-        var oppShips = GLT.rules.getShipsForBoard(this.getActiveBoardSize() === 8 ? '8x8' : '10x10', self.matchConfig.enemyCrewId);
+        var oppShips = GLT.rules.getShipsForBoard(this.matchConfig.boardId, this.matchConfig.enemyCrewId);
+        var sunkLeft = (myBoardView.sunkShips || []).slice();
         oppShips.forEach(function(s) {
-          var sNameOpp = s.name;
+          var at = -1;
+          for (var si = 0; si < sunkLeft.length && at < 0; si++) if (sunkLeft[si].id === s.id) at = si;
+          for (var sj = 0; sj < sunkLeft.length && at < 0; sj++) if (sunkLeft[sj].name === s.name) at = sj;
+          var isSunkOpp = at >= 0;
+          if (isSunkOpp) sunkLeft.splice(at, 1);
           var itemOpp = document.createElement('div');
-          itemOpp.className = 'fleet-ship-card';
+          itemOpp.className = 'fleet-ship-card' + (isSunkOpp ? ' sunk' : '');
           itemOpp.innerHTML =
-            '<span class="ship-name">' + sNameOpp + ' (' + s.length + ')</span>' +
-            '<span class="ship-status">' + T.ui.shipUnknown + '</span>';
+            '<span class="ship-name">' + s.name + ' (' + s.length + ')</span>' +
+            '<span class="ship-status">' + (isSunkOpp ? T.ui.shipSunk : T.ui.shipUnknown) + '</span>';
           p1ListPvp.appendChild(itemOpp);
         });
         fleetBox.appendChild(p1ListPvp);
 
-        // 2. Player Fleet Status (BELOW)
+        // 2. Player Fleet Status (BELOW): my ships against the rival's answered shots.
         var p0TitlePvp = document.createElement('h4');
         p0TitlePvp.className = 'glt-group-title';
         p0TitlePvp.style.marginTop = '12px';
-        p0TitlePvp.textContent = '⚓ ' + T.ui.playerFleetStatus;
+        p0TitlePvp.textContent = '⚓ ' + T.ui.playerFleetStatus + ' (' + rivalBoardView.remainingShips + '/' + rivalBoardView.totalShips + ')';
         fleetBox.appendChild(p0TitlePvp);
+        fleetBox.appendChild(this.buildPvpShotTally(rivalBoardView.shots));
 
         var p0ListPvp = document.createElement('div');
         p0ListPvp.className = 'glt-fleet-list';
+        var incoming = rivalBoardView.shots || {};
         this.placedPlayerFleet.forEach(function(s) {
-          var sNameMine = s.name;
+          var cells = s.cells || [];
+          var hitCells = cells.filter(function(c) {
+            var shot = incoming[c.r + ',' + c.c];
+            return shot && (shot.outcome === 'hit' || shot.outcome === 'sunk');
+          }).length;
+          var isSunkMine = cells.length > 0 && hitCells >= cells.length;
           var cardMine = document.createElement('div');
-          cardMine.className = 'fleet-ship-card';
+          cardMine.className = 'fleet-ship-card' + (isSunkMine ? ' sunk' : '');
           cardMine.innerHTML =
-            '<span class="ship-name">' + sNameMine + ' (' + s.length + ')</span>' +
-            '<span class="ship-status">' + T.ui.shipIntact + '</span>';
+            '<span class="ship-name">' + s.name + ' (' + s.length + ')</span>' +
+            '<span class="ship-status">' + (isSunkMine ? T.ui.shipSunk : hitCells > 0 ? T.ui.shipDamaged : T.ui.shipIntact) + '</span>';
           p0ListPvp.appendChild(cardMine);
         });
         fleetBox.appendChild(p0ListPvp);
@@ -5915,6 +5979,17 @@
       }
 
       container.appendChild(fleetBox);
+    },
+
+    /** One line of live numbers for a PvP shot map ('r,c' -> { outcome }): shots, hits, accuracy. */
+    buildPvpShotTally: function(shots) {
+      var list = Object.keys(shots || {}).map(function(k) { return shots[k]; });
+      var hits = list.filter(function(s) { return s.outcome === 'hit' || s.outcome === 'sunk'; }).length;
+      var acc = list.length > 0 ? Math.round((hits / list.length) * 100) : 0;
+      var el = document.createElement('div');
+      el.className = 'glt-fleet-summary-strip glt-fleet-tally';
+      el.textContent = getT().ui.shotTally(list.length, hits, acc);
+      return el;
     },
 
     renderLogbookTab: function() {
@@ -6030,6 +6105,91 @@
       settingsBox.style.display = 'flex';
       settingsBox.style.flexDirection = 'column';
       settingsBox.style.gap = '10px';
+
+      // 0. The game as an app: install, full screen, vibration
+      var shell = GLT.appShell;
+      if (shell) {
+        var appGroup = document.createElement('div');
+        appGroup.className = 'glt-form-group glt-app-group';
+        var appTitle = document.createElement('span');
+        appTitle.className = 'glt-group-title';
+        appTitle.textContent = T.ui.appGroupTitle;
+        appGroup.appendChild(appTitle);
+
+        var mode = shell.installMode();
+        var appNote = document.createElement('p');
+        appNote.className = 'glt-app-note';
+        if (mode === 'installed') {
+          appNote.textContent = T.ui.appInstalled;
+          appGroup.appendChild(appNote);
+        } else if (mode === 'prompt') {
+          var installBtn = document.createElement('button');
+          installBtn.type = 'button';
+          installBtn.className = 'glt-btn btn-primary btn-sm';
+          installBtn.textContent = T.ui.appInstallButton;
+          installBtn.addEventListener('click', function() {
+            shell.promptInstall().then(function() { self.renderSettingsTab(); });
+          });
+          appGroup.appendChild(installBtn);
+          appNote.textContent = T.ui.appInstallWhy;
+          appGroup.appendChild(appNote);
+        } else {
+          appNote.textContent = mode === 'ios' ? T.ui.appInstallIos : T.ui.appInstallMenu;
+          appGroup.appendChild(appNote);
+        }
+
+        if (shell.canFullscreen() && !shell.isStandalone()) {
+          var fsRow = document.createElement('div');
+          fsRow.className = 'glt-btn-row';
+          var fsBtn = document.createElement('button');
+          fsBtn.type = 'button';
+          fsBtn.className = 'glt-btn btn-sm';
+          fsBtn.textContent = shell.isFullscreen() ? T.ui.fullscreenExit : T.ui.fullscreenEnter;
+          fsBtn.addEventListener('click', function() {
+            shell.toggleFullscreen();
+          });
+          fsRow.appendChild(fsBtn);
+          appGroup.appendChild(fsRow);
+        }
+
+        var appToggles = [];
+        if (shell.canFullscreen() && !shell.isStandalone() && shell.isTouch()) {
+          appToggles.push({ id: 'chk-auto-fullscreen', label: T.ui.autoFullscreenToggle, val: shell.autoFullscreen(), onChange: function(v) { shell.setAutoFullscreen(v); } });
+        }
+        if (shell.canVibrate()) {
+          appToggles.push({ id: 'chk-vibrate', label: T.ui.vibrateToggle, val: shell.vibrateEnabled(), onChange: function(v) { shell.setVibrate(v); } });
+        }
+        appToggles.forEach(function(item) {
+          var row = document.createElement('div');
+          row.className = 'glt-checkbox-row';
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.id = item.id;
+          cb.checked = item.val;
+          cb.addEventListener('change', function() { item.onChange(cb.checked); });
+          var lbl = document.createElement('label');
+          lbl.htmlFor = item.id;
+          lbl.textContent = item.label;
+          row.appendChild(cb);
+          row.appendChild(lbl);
+          appGroup.appendChild(row);
+        });
+
+        if (shell.offlineReady()) {
+          var offNote = document.createElement('p');
+          offNote.className = 'glt-app-note';
+          offNote.textContent = T.ui.appOfflineReady;
+          appGroup.appendChild(offNote);
+        }
+        settingsBox.appendChild(appGroup);
+
+        if (!this._appShellSettingsHooked) {
+          this._appShellSettingsHooked = true;
+          shell.onChange(function() {
+            if (self.dom.tabSettings && self.dom.tabSettings.classList.contains('active')) self.renderSettingsTab();
+          });
+        }
+      }
 
       // 1. Pixel Size Slider with <label for="rng-pixel-size">
       var pxGroup = document.createElement('div');

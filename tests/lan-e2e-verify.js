@@ -305,6 +305,16 @@ async function runLanE2E() {
         await sleep(120);
       }
       check('Cannon shot & cryptographic answer synced across isolated devices', shotSynced);
+
+      // Esquadra tab is live on both sides: the shooter's tally of its shots and the defender's
+      // tally of incoming shots both count the answered shot without a manual refresh.
+      const tallyExpr = `Array.from(document.querySelectorAll('#content-tab-fleet .glt-fleet-tally')).map(e => e.textContent)`;
+      const shooterTally = await activeDev.eval(tallyExpr);
+      const defenderTally = await (aTurn ? devB.session : devA.session).eval(tallyExpr);
+      check('Esquadra tab counts the shot live on shooter and defender',
+        Array.isArray(shooterTally) && /^1 disparo /.test(shooterTally[0] || '') &&
+        Array.isArray(defenderTally) && /^1 disparo /.test(defenderTally[1] || ''),
+        JSON.stringify({ shooterTally, defenderTally }));
     }
 
     // 5. Room deletion (`deleteOpenPvpRoom`) deletes room on BOTH Device A and Device B!

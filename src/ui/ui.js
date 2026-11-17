@@ -551,7 +551,21 @@
 
       var footerText = document.createElement('p');
       footerText.className = 'glt-disclaimer';
-      footerText.textContent = T.meta.disclaimer;
+      // On phones the line scrolls right to left (CSS); the second copy closes the loop seamlessly
+      // and is hidden from screen readers. A tap pauses or resumes it.
+      var disclaimerTrack = document.createElement('span');
+      disclaimerTrack.className = 'glt-disclaimer-track';
+      var disclaimerMain = document.createElement('span');
+      disclaimerMain.className = 'glt-disclaimer-item';
+      disclaimerMain.textContent = T.meta.disclaimer;
+      var disclaimerCopy = document.createElement('span');
+      disclaimerCopy.className = 'glt-disclaimer-item glt-disclaimer-copy';
+      disclaimerCopy.setAttribute('aria-hidden', 'true');
+      disclaimerCopy.textContent = T.meta.disclaimer;
+      disclaimerTrack.appendChild(disclaimerMain);
+      disclaimerTrack.appendChild(disclaimerCopy);
+      footerText.appendChild(disclaimerTrack);
+      footerText.addEventListener('click', function() { footerText.classList.toggle('is-paused'); });
 
       var keyboardHelp = document.createElement('div');
       keyboardHelp.className = 'glt-keyboard-help';

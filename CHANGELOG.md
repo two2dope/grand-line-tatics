@@ -14,6 +14,7 @@ O formato baseia-se em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0
 - **Toque**: arrastar o painel além do fim não puxa mais a página (sem recarregar a partida por "puxar para atualizar"), toques respondem sem a espera do toque duplo, toque longo no tabuleiro não abre o menu de copiar. Tela não apaga durante a batalha. Vibração curta em acertos e naufrágios (Android).
 - Margens para o entalhe e a barra inferior do iPhone no app instalado.
 - **Alvos de toque de 44 px**: em tela de toque, os ícones da barra de cima, as pílulas de câmera, as abas, os botões (FOGO, técnica, Log Pose, iniciar batalha) e os seletores ficam com pelo menos 44×44 px de área de toque, sem sobreposição entre vizinhos. Em computador nada muda.
+- **Rodapé no celular**: o aviso de homenagem de fã, que era cortado com reticências, agora rola continuamente da direita para a esquerda (cerca de 28 px/s), em retrato e deitado. Um toque pausa e retoma. Com "reduzir movimento" ligado, o texto fica parado e quebra em linhas. No computador nada muda.
 - **Movimento reduzido nos fogos da vitória**: com "reduzir movimento" ligado no sistema, os fogos não dão o clarão branco e soltam no máximo um rojão por segundo.
 
 ### Documentação

@@ -1991,6 +1991,55 @@ input[type="range"] {
   min-width: 260px;
 }
 
+/* the seamless-loop copy only exists for the phone marquee below */
+.glt-disclaimer-copy {
+  display: none;
+}
+
+/* Phones (narrow or short landscape): the disclaimer is one line that scrolls right to left.
+   Reduced motion: no scroll, the text wraps instead. Hover or a tap pauses it (WCAG 2.2.2). */
+@media (max-width: 520px), (orientation: landscape) and (max-height: 520px) {
+  .glt-disclaimer {
+    min-width: 0;
+    overflow: hidden;
+    cursor: pointer;
+  }
+
+  .glt-disclaimer-track {
+    display: block;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .glt-disclaimer {
+      white-space: nowrap;
+    }
+
+    .glt-disclaimer-track {
+      display: inline-flex;
+      width: max-content;
+      animation: glt-marquee 45s linear infinite;
+    }
+
+    .glt-disclaimer-item {
+      padding-right: 4em;
+    }
+
+    .glt-disclaimer-copy {
+      display: inline;
+    }
+
+    .glt-disclaimer:hover .glt-disclaimer-track,
+    .glt-disclaimer.is-paused .glt-disclaimer-track {
+      animation-play-state: paused;
+    }
+  }
+}
+
+@keyframes glt-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
 .glt-keyboard-help {
   font-family: var(--font-sans);
   font-size: 10px;
@@ -2401,9 +2450,6 @@ input[type="range"] {
 
   .glt-disclaimer {
     font-size: 8px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .glt-crew-grid {
@@ -4160,9 +4206,6 @@ input[type="range"] {
 
   .glt-disclaimer {
     font-size: 8px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .glt-keyboard-help {

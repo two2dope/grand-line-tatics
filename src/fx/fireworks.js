@@ -125,8 +125,9 @@
     const Pp = P();
     const x = s.x, y = s.y, z = s.z;
     V.x = x; V.y = y; V.z = z;
-    Pp.emit('flash', V, O_BFLASH);
     const red = Pp.reduced() ? 0.5 : 1;
+    // reduced motion: no white burst flash (stars still bloom, at half count)
+    if (red === 1) Pp.emit('flash', V, O_BFLASH);
     if (s.type === 0) {            // peony: two-tone sphere
       const n = Math.round(96 * red);
       for (let i = 0; i < n; i++) {
@@ -183,8 +184,10 @@
       S.next -= dt;
       if (S.next <= 0) {
         launchShell();
-        // first volley comes quick, then a steady rhythm with occasional doubles
-        S.next = (S.count < 3 ? 0.28 : 0.45 + S.rng.next() * 0.55) / S.rate;
+        // first volley comes quick, then a steady rhythm with occasional doubles;
+        // reduced motion keeps one shell per second at most (no quick volley)
+        S.next = P().reduced() ? 1 + S.rng.next() * 0.6
+          : (S.count < 3 ? 0.28 : 0.45 + S.rng.next() * 0.55) / S.rate;
       }
     }
     for (let i = 0; i < S.shells.length; i++) {

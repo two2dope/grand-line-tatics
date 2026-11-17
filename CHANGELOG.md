@@ -13,6 +13,11 @@ O formato baseia-se em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0
 - **Celular deitado**: cena e painel lado a lado. Antes a cena ficava com uns 120 px de altura e o radar saía da tela; agora o radar das águas inimigas ocupa a altura do painel com FOGO, técnica e Log Pose numa coluna ao lado (testado de 667x375 a 932x430).
 - **Toque**: arrastar o painel além do fim não puxa mais a página (sem recarregar a partida por "puxar para atualizar"), toques respondem sem a espera do toque duplo, toque longo no tabuleiro não abre o menu de copiar. Tela não apaga durante a batalha. Vibração curta em acertos e naufrágios (Android).
 - Margens para o entalhe e a barra inferior do iPhone no app instalado.
+- **Alvos de toque de 44 px**: em tela de toque, os ícones da barra de cima, as pílulas de câmera, as abas, os botões (FOGO, técnica, Log Pose, iniciar batalha) e os seletores ficam com pelo menos 44×44 px de área de toque, sem sobreposição entre vizinhos. Em computador nada muda.
+- **Movimento reduzido nos fogos da vitória**: com "reduzir movimento" ligado no sistema, os fogos não dão o clarão branco e soltam no máximo um rojão por segundo.
+
+### Documentação
+- `docs/evolution-report.md` (raio-X e plano em ondas), `docs/web-guidance-rules.md` (regras web congeladas), `release.md` (receita de publicação) e um bloco "Current contract" no topo do `ARCHITECTURE.md` com o build real e a divisão de áreas.
 
 ### Corrigido (rodada de testes em celular e computador)
 - **Placar do PvP em tempo real**: a aba Esquadra mostrava a lista parada (inimigos sempre "???", seus navios sempre "Intacto"). Agora cada tiro respondido atualiza os dois aparelhos: navio inimigo afundado aparece como afundado, os seus como avariados ou afundados, contagem de navios nas duas frotas e uma linha com disparos, acertos e precisão de cada lado. O mini-radar sobre a cena (painel recolhido) também redesenha a cada tiro, e a "maior sequência de acertos" do fim da partida online é contada de verdade.

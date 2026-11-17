@@ -7,6 +7,35 @@ Notation: TypeScript-like signatures. `?` marks an optional argument or field. `
 
 ---
 
+## Current contract (2026-11, evolve mode) — read before §0
+
+This block wins over §0–§16 wherever they disagree. §0–§16 describe the original nine-builder plan and the `tools/` build. They stay as the API reference for `GLT.*` namespaces and for the capture harness.
+
+- **Track / engine:** `game-3d`, installable PWA. three.js **r128** global from cdnjs (pinned; no upgrade without an operator decision).
+- **Frozen web rules:** [`docs/web-guidance-rules.md`](docs/web-guidance-rules.md).
+- **Shipping build:** `node scripts/build.js` → single-file `index.html` (+ `grand-line-tactics.html`), `sw.js` from `src/sw/sw.js`. All CSS lives in `getStyles()` inside `scripts/build.js`. The controller is `GLT.ui` in `src/ui/ui.js`.
+- **`tools/` and `legacy/`:** capture harness (`?demo=&t=`), shots, smoke, trailer and the old multi-script build. They are kept and still used by `npm run smoke|baseline|trailer|build:demo|test:legacy`, but nothing in them ships.
+
+### Ownership (disjoint)
+
+| Area | Files | Rule |
+|---|---|---|
+| `logic` | `src/logic/**`, `tests/rules-test.js`, `tests/pvp-protocol.js`, `tests/sim-headless.js` | Zero DOM/THREE, no `Math.random` (seeded `GLT.rng`). Runs in Node. |
+| `net` | `src/net/**`, `scripts/lan-server.js`, `tests/peer-transport-test.js`, `tests/lan-server-test.js`, `tests/artifact-db-test.js` | Protocol core stays headless. Browser globals (`window.__GLT_LAN_CONFIG__`, `BroadcastChannel`, `localStorage`, `EventSource`, `fetch`) are guarded with `typeof` today. Moving them behind an injected adapter is Onda 2. |
+| `render` | `src/render/**`, `src/world/**`, `src/sea/**`, `src/ships/**`, `src/fx/**`, `src/pilot-render/**`, `src/audio/**` | Reads state and events; never mutates rules. Honours R3 (reduced motion). |
+| `ui` | `src/ui/**`, the CSS in `getStyles()` (`scripts/build.js`) | Accessible HUD, lobby, QR, fleet tab. Honours R1, R2, R5. Splitting `ui.js` is Onda 2. |
+| `pwa` | `manifest.webmanifest`, `src/sw/sw.js`, `assets/icons/**`, `src/ui/app-shell.js` | Page network-first, assets and CDN cache-first per deploy version. Never cache the relay API or PeerJS signalling. |
+| `app` | `scripts/build.js` (except `getStyles()`), `package.json`, `index.html` output | Wiring and build. Edited only by the integrator step. |
+| `mobile` | — | Inactive (`target_mobile_wrapper: none`). TWA is Onda 3. |
+
+Cross-area changes go to the integrator as `requests_for_other_areas`; no area edits another's files.
+
+### Preserved (do not rewrite)
+
+`src/logic/**` and its suites, the commit-reveal PvP protocol, the LAN relay, the single-file build and Pages deploy, the PWA shell, and every Playwright suite (`e2e`, `lan`, `lan:real`). Every change keeps `npm test` green.
+
+---
+
 ## 0. Ground rules (read first)
 
 1. **Ownership.** You own `src/<your-area>/**`, `tests/<your-area>.*.test.mjs`, `dist/<your-tag>.html`, `shots/<your-area>/**`. You never edit anything else. The architect owns `ARCHITECTURE.md` and `tests/contract.*.test.mjs`. The tools agent owns `tools/**`, `package.json` and `progress/**`. `tests/run.mjs` is shared infrastructure whose interface is fixed by `tools/README.md` and §15; nobody else edits it. If you need a change in someone else's file (a missing i18n key, an API addition, a bug), **write it in your summary** under a heading "Requests for other areas", naming the file and the exact change.

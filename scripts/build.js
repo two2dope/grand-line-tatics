@@ -4264,6 +4264,65 @@ input[type="range"] {
     white-space: normal;
   }
 }
+
+/* Touch screens: every control reaches 44x44 (docs/web-guidance-rules.md R1). Compact controls
+   keep a smaller face and extend their hit area with ::after; gaps are set so extended areas
+   meet without overlapping. Last in the sheet so it wins over the phone/landscape blocks. */
+@media (pointer: coarse) {
+  .glt-quick-tools {
+    gap: 6px;
+  }
+
+  .glt-icon-btn {
+    position: relative;
+    width: 38px;
+    height: 38px;
+  }
+
+  .glt-icon-btn::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+  }
+
+  .glt-camera-bar {
+    gap: 12px 6px;
+  }
+
+  .glt-pill-btn {
+    position: relative;
+    min-height: 32px;
+  }
+
+  .glt-pill-btn::after {
+    content: "";
+    position: absolute;
+    inset: -6px 0;
+  }
+
+  .glt-tab-btn {
+    position: relative;
+    min-height: 44px;
+  }
+
+  .glt-btn,
+  .glt-battle-panel > .glt-battle-triggers .glt-btn,
+  .glt-tab-pane select {
+    min-height: 44px;
+  }
+}
+
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 520px) {
+  .glt-tab-btn {
+    min-height: 36px;
+  }
+
+  .glt-tab-btn::after {
+    content: "";
+    position: absolute;
+    inset: -4px 0;
+  }
+}
 `;
 }
 

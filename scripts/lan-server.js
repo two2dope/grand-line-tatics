@@ -483,6 +483,13 @@ function createLanServer() {
       return;
     }
 
+    // App manifest (the page links it). No service worker here: plain http on the LAN cannot run one.
+    if (req.method === 'GET' && pathname === '/manifest.webmanifest' && fs.existsSync(path.join(ROOT_DIR, 'manifest.webmanifest'))) {
+      res.writeHead(200, { 'Content-Type': 'application/manifest+json; charset=utf-8' });
+      fs.createReadStream(path.join(ROOT_DIR, 'manifest.webmanifest')).pipe(res);
+      return;
+    }
+
     // 7. three.js local (o HTML servido aponta para cá em vez do CDN)
     if (req.method === 'GET' && pathname === '/vendor/three.min.js' && fs.existsSync(VENDOR_THREE_FILE)) {
       res.writeHead(200, {

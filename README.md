@@ -37,6 +37,8 @@
 
 Abra [two2dope.github.io/grand-line-tatics](https://two2dope.github.io/grand-line-tatics/). Funciona contra a CPU e entre dois aparelhos em qualquer rede (veja "Duelo online").
 
+**No celular, instale o jogo**: no Android, Ajustes > Aplicativo > "Instalar o jogo" (ou menu do Chrome > "Instalar app"); no iPhone, Safari > Compartilhar > "Adicionar à Tela de Início". Instalado, abre pela tela inicial sem as barras do navegador e joga contra a CPU sem internet depois da primeira visita. No navegador, o botão de tela cheia fica na barra de cima, e um celular deitado entra em tela cheia no primeiro toque (dá para desligar em Ajustes; o Safari do iPhone não tem tela cheia para páginas, só o app instalado).
+
 Ou baixe o arquivo `grand-line-tactics.html` da [última release](../../releases/latest) e abra no navegador. Funciona contra a CPU e entre duas abas do mesmo aparelho.
 
 ### Duas pessoas na mesma rede Wi-Fi
@@ -118,7 +120,8 @@ Disparos médios até a vitória no 10×10 (simulação): Grumete 95,4 · Marujo
 src/
   logic/        regras, IA, RNG, protocolo PvP e textos PT-BR (puro, roda no Node)
   net/          transportes: db/room do Artifact, Wi-Fi (SSE) e BroadcastChannel
-  ui/           interface, fluxo de jogo e acessibilidade
+  ui/           interface, fluxo de jogo, acessibilidade e app instalável (app-shell.js)
+  sw/           modelo do service worker (o build gera sw.js com a lista de arquivos e a versão)
   audio/        efeitos e música sintetizados com Web Audio
   render/       renderer pixel art: paleta OKLab de 90 cores, dither Bayer, contornos, câmera
   world/        placas, oceano, cenário em anel, plateia e adereços
@@ -127,6 +130,7 @@ src/
   sea/          ponte entre o jogo e o renderer
 assets/         ilustrações carregadas pelo jogo, já redimensionadas (geradas por `npm run assets`)
 assets-src/     ilustrações originais em resolução cheia (não publicadas)
+manifest.webmanifest  manifesto do app instalável (ícones em assets/icons, gerados por scripts/make-icons.js)
 scripts/        build, build de artefato, servidor Wi-Fi, verificações e checagem de vazamentos
 tests/          suítes headless, E2E, fakes de transporte e sondas de revisão visual
 tools/          harness de screenshots, comparação cega, trailer e three.js vendorizado
